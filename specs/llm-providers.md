@@ -7,7 +7,8 @@
 **Feature map row (verbatim):** `| llm-providers | foundation:seam-contracts-and-test-doubles, foundation:config, foundation:log | llm |`
 **Branch:** `build/llm-providers` (never pushed, no remote, never `main` or `release`)
 **Related:** `.claude/project/blueprint.md` (component `llm (src/llm/)`, decisions "Agent core owns the tool loop" and "A scripted fake LLM provider", gate resolutions Q10, Q11, Q12); `docs/adr/0001` (degraded boot, no network at boot); `docs/adr/0002` (additive deployer contracts); `docs/adr/0003` (module-owned seam types, static registries); locked seam `src/llm/types.ts` and `src/llm/registry.ts`
-**Inputs folded in:** UX flows and surfaces (10 flows, 9 surfaces), the draft contracts (12), the test plan (52 criteria, 34 edge cases, 15 NFR checks), the binding human constraints (10)
+**Revision:** 2, the contract-lock escalation decision of 2026-09-09 (human constraint 11): the first lock's validators refused twice and their objections are folded in as binding constraints, never overridden; base revision committed at 3d4f2cf on `build/llm-providers`
+**Inputs folded in:** UX flows, surfaces, states and accessibility notes (13 flows, 12 surfaces), the draft contracts of the lock revision (12), the test plan of the lock revision (71 criteria, 56 edge cases, 22 NFR checks), the binding human constraints (11, the contract-lock escalation decision included)
 
 Repository: `C:/Coding Projects/voice-agent`. Every path below is relative to it unless written absolute.
 
@@ -21,9 +22,11 @@ The deployer is a no-coder whose only support channel is the status page. The fi
 
 Two blueprint decisions bound the design. "Agent core owns the tool loop; the AI SDK is a stateless stream behind LlmClient": `streamText` is called once per step with tools declared but never executed by the SDK, and text-delta, tool-call and finish are normalised into `LlmEvent`s. "A scripted fake LLM provider is accepted by config for CI and the simulator": `LLM_PROVIDER=fake` is valid but never advertised. The gate added Q10 (latency proxies 1.5 s median and 3 s p95 to first text; the default OpenAI model verified at build), Q11 (verify the AI SDK's current major and API shapes against Vercel's docs before writing `aiSdkClient.ts`; confirm the exact zod pin and Node 24) and Q12 (Anthropic, Google, Mistral and Groq ship unit-tested with mocked keys only).
 
-Verification done for this spec (2026-09-09). The npm registry `latest` tag of `ai` is 7.0.94 (6.0.278 and 5.0.253 are maintenance tags), so the blueprint's "v7" stands; `@ai-sdk/openai` 4.0.62, `@ai-sdk/anthropic` 4.0.50, `@ai-sdk/google` 4.0.65, `@ai-sdk/mistral` 4.0.40, `@ai-sdk/groq` 4.0.38 and `zod` 4.5.4 are the published versions and become exact pins. The API shapes (streamText options, fullStream part names and fields, tool definition without `execute`, abort handling, error classes, `MockLanguageModelV4` from `ai/test`) were read from ai-sdk.dev, the vercel/ai source and the published type declarations and are recorded in section 7.9 so the implementer builds against a checked list, not memory. The default OpenAI model moves from `gpt-5-mini` to `gpt-5.6-terra` with `reasoningEffort: 'none'`; the sources are recorded in section 7.6 and the owner's live check in `docs/acceptance.md` section 2 confirms the latency, never as a build gate.
+Verification done for this spec (2026-09-09). The npm registry `latest` tag of `ai` is 7.0.94 (6.0.278 and 5.0.253 are maintenance tags), so the blueprint's "v7" stands; `@ai-sdk/openai` 4.0.62, `@ai-sdk/anthropic` 4.0.50, `@ai-sdk/google` 4.0.65, `@ai-sdk/mistral` 4.0.40, `@ai-sdk/groq` 4.0.38 and `zod` 4.5.4 are the published versions and become exact pins. The API shapes (streamText options, fullStream part names and fields, tool definition without `execute`, abort handling, error classes, `MockLanguageModelV4` from `ai/test`) were read from ai-sdk.dev, the vercel/ai source and the published type declarations and are recorded in section 7.9 so the implementer builds against a checked list, not memory. The default OpenAI model moves from `gpt-5-mini` to `gpt-5.6-terra` with `reasoningEffort: 'none'`; the sources are recorded in section 7.6 and the owner's live check in `docs/acceptance.md` section 2 confirms the latency, never as a build gate. Re-verified for revision 2 from the published declaration files of `ai` 7.0.94 and `@ai-sdk/provider` 4.0.11 and the `dist` files of the pinned provider packages: `streamText` has a `streamRetries` option whose documentation reads "omit to disable all stream retry behavior" and an `onError` that may return `{ retry: true }`; `fullStream` emits `{ type: 'abort' }` when its `abortSignal` aborts; the part union also carries `reasoning-file`, `tool-output-denied`, `tool-approval-request` and `tool-approval-response`; `MockLanguageModelV4` reports `specificationVersion 'v4'`; `@ai-sdk/openai` 4.0.62 reads `OPENAI_BASE_URL` and `@ai-sdk/anthropic` 4.0.50 reads `ANTHROPIC_BASE_URL` through `loadOptionalSetting` while the google, mistral and groq packages read no base URL; zod 4.5.4 types the `toJSONSchema` target as `'draft-04' | 'draft-07' | 'draft-2020-12' | 'openapi-3.0'` and only normalises `'draft-7'` as a legacy alias. Human constraint 2 still requires the implementer to repeat this check immediately before writing `src/llm/aiSdkClient.ts`; this record is an input to that check, not a substitute.
 
-Decisions taken in this spec that the inputs left open (each recorded once, here): (a) provider HTTP 5xx and Anthropic 529 classify as `network` because the deployer's next step is the same as for an unreachable host; (b) no retry inside a turn (`maxRetries: 0`) so `LLM_TIMEOUT_MS` stays true and an interruption stays cheap; (c) no boot-time probe (readiness stays config-only, ADR 0001; it would spend a token per deploy); (d) the probe budget is the constant `PROBE_TIMEOUT_MS = 10000` with its own sentence, because the locked `create()` signature cannot carry `LLM_TIMEOUT_MS`; (e) low-latency provider options apply only when the exact default model is in use; (f) the message length bound is 180 characters, because the `unknown` sentence with an HTTP status measures 171 to 176 characters for the shipped provider ids (the draft contract's 170 is superseded); (g) `zod` is pinned exactly at 4.5.4 as the blueprint asked, a documented exception to the caret ranges elsewhere; (h) `src/llm/stub.ts` is deleted; (i) `createAiSdkClient` accepts an optional `baseURL` for OpenAI-compatible hosts, forwarded unchanged to whichever `@ai-sdk/*` factory the sdk map names (only the openai sdk switches API on it), but no such provider file ships; (j) the fake provider's script gains `fail <kind>`, the `person` (no turn text) versus `human` (with turn text) split and an echo reply; a `goodbye` trigger is out of scope; (k) the timeout phase is decided by the first-token state, not by which timer fired: any client timer before the first forwarded token reports `first`, so with `stallMs` and `timeoutMs` both equal to `LLM_TIMEOUT_MS` (the only configuration config produces) a model that never starts answering always yields the 'did not start answering' sentence, and a same-tick tie after the first token reports `gap`; (l) plain history messages (system, user, assistant without a tool call) whose content is empty or whitespace-only are dropped before the SDK call, because the agent records an interrupted turn as `''` and Anthropic rejects empty text with HTTP 400; (m) the 13 sentence templates are exported as data (`LLM_ERROR_TEMPLATES`) and `llmError` renders from them, so the README glossary and the snapshot share one source.
+Revision 2 folds in the three binding objections of the contract lock: (a) `Deadlines` gains `abort(): void`, idempotent, which aborts the combined signal without recording an outcome, so `outcome()` stays null, a self-abort never produces a timeout sentence and NFR-5's listener count is unaffected; FR-17 and FR-31 cite it as the mechanism that releases the HTTP request after every terminal event and after the probe's first token, FR-12 keeps `abortSignal: deadlines.signal` as the single signal handed to `streamText`, an `abort` stream part arriving after the terminal is ignored, AC-10, AC-17, AC-18 and AC-37 observe `abortSignal.aborted === true` through it, and `providers/fake.ts` builds on the same shape (sections 7.2, 7.4, 8.6); (b) section 8.12 is the data model of `LLM_ERROR_TEMPLATES` / `LlmErrorTemplate { kind, variant, template }` with the primary key `(kind, variant)`, a closed `variant` enum of exactly the 13 ids of section 7.3, the fake's bare-`fail` sentence explicitly outside the table, the coverage invariant that the selector `(kind, keyEnv === null, isDefaultModel, phase, status !== undefined)` resolves to exactly one row for every reachable combination (enforced by an enumerating test, AC-66), and the closed placeholder vocabulary `<p>`, `<KEY>`, `<status>` with the invariant that no `<` or `>` survives rendering (enforced by a test over every row, AC-67); OS-4, AC-24 and NFR-17 reference that entry; (c) the revised spec is formatted with `pnpm prettier --write specs/llm-providers.md` so `pnpm lint` stays green, and committed on `build/llm-providers` (AC-71).
+
+Decisions taken in this spec that the inputs left open (each recorded once, here): (a) provider HTTP 5xx and Anthropic 529 classify as `network` because the deployer's next step is the same as for an unreachable host; (b) no retry inside a turn (`maxRetries: 0`) so `LLM_TIMEOUT_MS` stays true and an interruption stays cheap; (c) no boot-time probe (readiness stays config-only, ADR 0001; it would spend a token per deploy); (d) the probe budget is the constant `PROBE_TIMEOUT_MS = 10000` with its own sentence, because the locked `create()` signature cannot carry `LLM_TIMEOUT_MS`; (e) low-latency provider options apply only when the exact default model is in use; (f) the message length bound is 180 characters, because the `unknown` sentence with an HTTP status measures 171 to 176 characters for the shipped provider ids (the draft contract's 170 is superseded); (g) `zod` is pinned exactly at 4.5.4 as the blueprint asked, a documented exception to the caret ranges elsewhere; (h) `src/llm/stub.ts` is deleted; (i) `createAiSdkClient` accepts an optional `baseURL` for OpenAI-compatible hosts, forwarded unchanged to whichever `@ai-sdk/*` factory the sdk map names (only the openai sdk switches API on it), but no such provider file ships; (j) the fake provider's script gains `fail <kind>`, the `person` (no turn text) versus `human` (with turn text) split and an echo reply; a `goodbye` trigger is out of scope; (k) the timeout phase is decided by the first-token state, not by which timer fired: any client timer before the first forwarded token reports `first`, so with `stallMs` and `timeoutMs` both equal to `LLM_TIMEOUT_MS` (the only configuration config produces) a model that never starts answering always yields the 'did not start answering' sentence, and a same-tick tie after the first token reports `gap`; (l) plain history messages (system, user, assistant without a tool call) whose content is empty or whitespace-only are dropped before the SDK call, because the agent records an interrupted turn as `''` and Anthropic rejects empty text with HTTP 400; (m) the 13 sentence templates are exported as data (`LLM_ERROR_TEMPLATES`) and `llmError` renders from them, so the README glossary and the snapshot share one source; (n) the self-abort that releases the HTTP request after a terminal event and after the probe's first token is `Deadlines.abort()`, a member that records no outcome, rather than a second controller inside the client, so one signal reaches `streamText` and a finished turn can never become a phantom timeout (revision 2); (o) `streamRetries` is omitted from every `streamText` call, never set to 0, because the SDK documents that 0 enables an `onError`-requested retry while omission disables all stream retry behaviour, and `onError` returns `undefined`, never `{ retry: true }`, so no step is re-run after words were spoken to the caller (revision 2); (p) the zod `toJSONSchema` target literal is the typed `'draft-07'`, not the legacy alias `'draft-7'` an earlier draft of this spec used (revision 2); (q) the SDK-level `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` reads are documented in the README rather than defeated by pinning vendor URLs in code (OS-20, revision 2); (r) a non-finite token count in a `finish` part is treated as absent, so no `usage` field can render as `null` in a log line (revision 2); (s) the variant of a template is a closed enum and the selector is a total function, so a selector combination without a row fails a test at build rather than rendering an empty sentence at runtime (section 8.12, revision 2).
 
 ---
 
@@ -48,26 +51,26 @@ Decisions taken in this spec that the inputs left open (each recorded once, here
 
 ### `stream()` mapping
 
-- FR-12: `stream(req)` MUST call `streamText` exactly once per call with `{ model, messages, tools, abortSignal: deadlines.signal, maxRetries: 0, providerOptions: o.providerOptions, onError: () => {} }` and MUST NOT pass `timeout`, `onAbort`, `stopWhen`, `toolChoice` or `maxOutputTokens` (the SDK default `stopWhen: stepCountIs(1)` ends the step after tool calls because no tool has `execute`).
-- FR-13: `onError` MUST always be overridden with a no-op so the SDK's default `console.error` of the raw provider error never runs; `console.error` MUST NOT be called by anything in `src/llm`.
+- FR-12: `stream(req)` MUST call `streamText` exactly once per call with `{ model, messages, tools, abortSignal: deadlines.signal, maxRetries: 0, providerOptions: o.providerOptions, onError: () => {} }`, where `deadlines.signal` is the single signal handed to the SDK (the client owns no second controller; releasing the request is `deadlines.abort()`, FR-17), and MUST NOT pass `streamRetries` (omitted, never set to 0: the SDK documents that 0 enables an `onError`-requested retry that re-runs the step and can re-emit deltas after words were spoken to the caller, while omitting the option disables all stream retry behaviour, EC-44), `timeout`, `onAbort`, `stopWhen`, `toolChoice`, `headers`, `fetch` or `maxOutputTokens` (the SDK default `stopWhen: stepCountIs(1)` ends the step after tool calls because no tool has `execute`).
+- FR-13: `onError` MUST always be overridden with a no-op that returns `undefined` synchronously, never `{ retry: true }` and never a promise, so the SDK's default `console.error` of the raw provider error never runs and no retry is ever requested; `console.error` MUST NOT be called by anything in `src/llm`.
 - FR-14: `LlmMessage[]` MUST map to SDK `ModelMessage[]` as: `system` to `{ role: 'system', content }`; `user` to `{ role: 'user', content }`; `assistant` without `toolCallId` to `{ role: 'assistant', content }`; `assistant` with `toolCallId` to an assistant message whose content is `[{ type: 'text', text: content }]` (only when `content.trim() !== ''`) followed by `{ type: 'tool-call', toolCallId, toolName: toolName ?? '', input: toolInput ?? {} }`; `tool` to `{ role: 'tool', content: [{ type: 'tool-result', toolCallId: toolCallId ?? '', toolName: toolName ?? '', output: { type: 'text', value: content } }] }`; a missing id or name MUST substitute `''` and MUST NOT throw. Before mapping, every plain message (`system`, `user`, or `assistant` without `toolCallId`) whose `content.trim()` is `''` MUST be dropped: the agent legitimately records an assistant turn as `''` when an interrupt lands before its first word, and Anthropic rejects empty or whitespace-only text with HTTP 400 (`unknown (HTTP 400)`), which would repeat on every later turn of the call while the message stays in history; the tool-call variant keeps its tool-call part and drops only its text part under the same rule, the tool-result variant is forwarded as is (an empty `content` included), and a history that is empty after the drop is passed to the SDK as is, whatever it answers being classified as usual, never a throw. Consecutive assistant tool-call messages (one per parallel call, EC-43) MUST each map independently; the seam comment on `toolCallId` ('Set on tool messages') is narrower than this use on assistant messages, a widening this spec records rather than edits (ADR 0003).
-- FR-15: Each `LlmToolSpec` MUST be declared as `tools[spec.name] = tool({ description: spec.description, inputSchema: jsonSchema(z.toJSONSchema(spec.inputSchema, { target: 'draft-7', io: 'input', unrepresentable: 'any' })) })` with no `execute` and no `validate`, so the SDK never runs a tool and never validates its input.
-- FR-16: `fullStream` parts MUST map as: `text-delta { text }` to `{ type: 'text-delta', text }` forwarded immediately, unmodified and never coalesced, an empty `text` dropped but still re-arming the stall timer; `tool-call { toolCallId, toolName, input }` to `{ type: 'tool-call', toolCallId, name: toolName, input }` forwarded with the raw input even when the part carries `invalid: true` or an unknown tool name; `finish { finishReason, totalUsage }` to `{ type: 'finish', finishReason, usage }` with `stop`, `tool-calls` and `length` passed through, `content-filter` and `other` as `other`, `usage: { inputTokens, outputTokens }` with undefined fields omitted and the `usage` key itself omitted unless at least one of the two is a number (a `totalUsage` object with both undefined yields no `usage` key, never `usage: {}`); `finish` with reason `error` and no earlier error part to `{ type: 'error', error: unknown without status }`; `error { error }` to `{ type: 'error', error: classify(error) }`; `abort` to the kind decided by `deadlines.outcome()` (`aborted` when the caller's signal is aborted, `timeout` with the phase `outcome()` reports when a client timer fired, else `unknown` without status) without ever reading the part's reason text; an exception thrown while iterating to `{ type: 'error', error: classify(thrown) }`; `start`, `start-step`, `finish-step`, `reasoning-*`, `source`, `file`, `raw`, `custom`, `tool-input-*`, `tool-result` and `tool-error` dropped after re-arming the stall timer.
-- FR-17: Every stream MUST emit exactly one terminal event (`finish` or `error`); after emitting it the client MUST abort its own controller (releasing the HTTP request), clear both timers, stop iterating and ignore every later part, and the same MUST happen in the generator's `finally` when the consumer stops early; `stream()` MUST NOT throw; once `req.signal` is aborted no further non-terminal event MUST be emitted.
+- FR-15: Each `LlmToolSpec` MUST be declared as `tools[spec.name] = tool({ description: spec.description, inputSchema: jsonSchema(z.toJSONSchema(spec.inputSchema, { target: 'draft-07', io: 'input', unrepresentable: 'any' })) })` with no `execute` and no `validate`, so the SDK never runs a tool and never validates its input; the target literal MUST be the typed `'draft-07'` of zod 4.5.4 (`'draft-7'` compiles only through the `{} & string` escape and works only because zod normalises the legacy alias, EC-21), and the conversion MUST NOT throw for any schema.
+- FR-16: `fullStream` parts MUST map as: `text-delta { text }` to `{ type: 'text-delta', text }` forwarded immediately, unmodified and never coalesced, an empty `text` dropped but still re-arming the stall timer; `tool-call { toolCallId, toolName, input }` to `{ type: 'tool-call', toolCallId, name: toolName, input }` forwarded with the raw input even when the part carries `invalid: true` or an unknown tool name; `finish { finishReason, totalUsage }` to `{ type: 'finish', finishReason, usage }` with `stop`, `tool-calls` and `length` passed through, `content-filter` and `other` as `other`, `usage: { inputTokens, outputTokens }` with undefined fields omitted and the `usage` key itself omitted unless at least one of the two is a number (a `totalUsage` object with both undefined yields no `usage` key, never `usage: {}`); `finish` with reason `error` and no earlier error part to `{ type: 'error', error: unknown without status }`; a `totalUsage` count that is not a finite number (`NaN`, `Infinity`) treated as absent, so no `usage` field can ever serialise as `null` (EC-52); `error { error }` to `{ type: 'error', error: classify(error) }`; `abort` to the kind decided by `deadlines.outcome()` (`aborted` when the caller's signal is aborted, `timeout` with the phase `outcome()` reports when a client timer fired, else `unknown` without status) without ever reading the part's reason text, except that an `abort` part arriving after the terminal event (the SDK emits one when the client's own `deadlines.abort()` aborts the signal, EC-45) is ignored like every other later part and never mapped; an exception thrown while iterating to `{ type: 'error', error: classify(thrown) }`; `start`, `start-step`, `finish-step`, `reasoning-*` (`reasoning-file` included), `source`, `file`, `raw`, `custom`, `tool-input-*`, `tool-result`, `tool-error`, `tool-output-denied`, `tool-approval-request`, `tool-approval-response` and any part type not named in this list dropped after re-arming the stall timer, never mapped to an error (EC-51).
+- FR-17: Every stream MUST emit exactly one terminal event (`finish` or `error`); after emitting it the client MUST call `deadlines.abort()` (which aborts the combined signal handed to `streamText`, so the HTTP request is released, without recording an outcome, so `outcome()` stays null and no timeout sentence can follow) and then `deadlines.clear()` (both timers cleared, the caller listener removed), stop iterating and ignore every later part, the SDK's `abort` part caused by that self-abort included; the same `abort()` then `clear()` MUST happen in the generator's `finally` when the consumer stops early; `stream()` MUST NOT throw; once `req.signal` is aborted no further non-terminal event MUST be emitted; a finished turn MUST never turn into a timeout (AC-64).
 - FR-18: When the caller's signal and a client timer fire in the same tick the terminal MUST be kind `aborted`, never `timeout`; a caller signal that is already aborted before `stream()` is called MUST yield a single `aborted` event without any SDK call.
 - FR-19: The client MUST record the time of the first forwarded token only to call `firstToken()` (which moves the timeout phase from `first` to `gap` or `total`, FR-20) and to report `probe().ms`; the clock is `Date.now()` (integer milliseconds, faked by vitest's fake timers by default, which `performance.now()` is not), and it MUST NOT delay, buffer or annotate events for that purpose.
 
 ### `src/llm/deadlines.ts` (timeout and abort policy)
 
-- FR-20: `createDeadlines({ signal, timeoutMs, stallMs })` MUST return `{ signal, touch(), firstToken(), outcome(), clear() }` where: the total timer is armed at creation for `timeoutMs` and never re-armed; the stall timer is armed at creation for `stallMs` and re-armed on every `touch()` (and by `firstToken()`), so before the first token it bounds time-to-first-token as well, a deliberate widening of the seam comment on `LlmStreamRequest.stallMs` ('once streaming has started') that this spec records rather than edits (ADR 0003) and that a consumer passing `stallMs < timeoutMs` must expect; both timers are `unref`'d; the combined `signal` aborts when the caller's signal aborts or when either timer fires; the outcome is recorded once, by the first timer callback to run, and every later firing (the re-armed stall timer coming due after the total timer included) is ignored; `outcome()` returns `'caller'` whenever the caller's signal is aborted (even if a timer fired in the same tick), otherwise the phase decided by the first-token state rather than by which timer fired: `'first'` when a timer fired before `firstToken()` was called, whichever timer it was; `'gap'` when the stall timer fired after `firstToken()`; `'total'` when the total timer fired after `firstToken()`, except that when the stall timer is due at the same instant (its due time, tracked on every arm, is not later than now) the total timer's callback MUST record `'gap'`, so a same-tick tie is deterministic whichever callback Node runs first; otherwise `null`; `clear()` is idempotent, clears both timers, removes the caller listener, and a timer firing after `clear()` is ignored; an already-aborted caller signal aborts the combined signal synchronously at creation; values are used as given (config guarantees `LLM_TIMEOUT_MS` in 1000..120000; tests and the fake may pass smaller values, including 0 and 1). Consequence in production, where the agent passes `LLM_TIMEOUT_MS` for both budgets (8.5): the SDK's `start` and `start-step` parts re-arm the stall timer a few milliseconds after creation, so on a model that never starts answering the total timer fires first, and the phase rule above is what makes the 'did not start answering' sentence (never 'took longer than the LLM_TIMEOUT_MS limit to finish') the deterministic output for that case (AC-60); with equal budgets the `'gap'` phase is unreachable, because a re-armed stall timer is always due after the total timer, so a deployer's page and logs show only the `first` and `total` sentences and nobody needs to hunt for the `gap` one.
+- FR-20: `createDeadlines({ signal, timeoutMs, stallMs })` MUST return `{ signal, touch(), firstToken(), outcome(), abort(), clear() }` where: `abort()` is idempotent, aborts the combined `signal` without recording an outcome (so `outcome()` stays null and a self-abort never yields a timeout sentence), adds no listener to the caller's signal (NFR-5's listener count is unaffected), never aborts the caller's signal, never erases an outcome a timer already recorded, and a timer firing after `abort()` is ignored; the total timer is armed at creation for `timeoutMs` and never re-armed; the stall timer is armed at creation for `stallMs` and re-armed on every `touch()` (and by `firstToken()`), so before the first token it bounds time-to-first-token as well, a deliberate widening of the seam comment on `LlmStreamRequest.stallMs` ('once streaming has started') that this spec records rather than edits (ADR 0003) and that a consumer passing `stallMs < timeoutMs` must expect; both timers are `unref`'d; the combined `signal` aborts when the caller's signal aborts or when either timer fires; the outcome is recorded once, by the first timer callback to run, and every later firing (the re-armed stall timer coming due after the total timer included) is ignored; `outcome()` returns `'caller'` whenever the caller's signal is aborted (even if a timer fired in the same tick), otherwise the phase decided by the first-token state rather than by which timer fired: `'first'` when a timer fired before `firstToken()` was called, whichever timer it was; `'gap'` when the stall timer fired after `firstToken()`; `'total'` when the total timer fired after `firstToken()`, except that when the stall timer is due at the same instant (its due time, tracked on every arm, is not later than now) the total timer's callback MUST record `'gap'`, so a same-tick tie is deterministic whichever callback Node runs first; otherwise `null`; `clear()` is idempotent, clears both timers, removes the caller listener, is safe before or after `abort()`, and a timer firing after `clear()` is ignored; an already-aborted caller signal aborts the combined signal synchronously at creation; values are used as given (config guarantees `LLM_TIMEOUT_MS` in 1000..120000; tests and the fake may pass smaller values, including 0 and 1). Consequence in production, where the agent passes `LLM_TIMEOUT_MS` for both budgets (8.5): the SDK's `start` and `start-step` parts re-arm the stall timer a few milliseconds after creation, so on a model that never starts answering the total timer fires first, and the phase rule above is what makes the 'did not start answering' sentence (never 'took longer than the LLM_TIMEOUT_MS limit to finish') the deterministic output for that case (AC-60); with equal budgets the `'gap'` phase is unreachable, because a re-armed stall timer is always due after the total timer, so a deployer's page and logs show only the `first` and `total` sentences and nobody needs to hunt for the `gap` one.
 - FR-21: The kind of a timeout or abort MUST come from `outcome()` only; the SDK's `timeout` option and the free text of its abort reason MUST NOT be used to decide a kind.
 - FR-22: `src/llm/deadlines.ts` and `src/llm/errors.ts` MUST import nothing but `./types.js` (no external package), so the fake provider can share them without touching the SDK.
 
 ### `src/llm/errors.ts` (kinds and the deployer-facing catalogue)
 
-- FR-23: `src/llm/errors.ts` MUST export `LlmErrorContext`, `TimeoutPhase`, `llmError(kind, ctx, o?)`, `kindForStatus(status, responseBody?)`, `isConnectionFailure(err)`, `CONNECTION_ERROR_CODES` and the data table `LLM_ERROR_TEMPLATES` (the 13 `(kind, variant)` rows of the section 7.3 catalogue in table order, each `{ kind, variant, template }` with the template carrying the literal placeholders `<p>`, `<KEY>` and `<status>`), MUST render every message from that table, and MUST be the single source of every `LlmError.message` produced under `src/llm` (the fake reuses it); the table exists so the README troubleshooting glossary (OS-4) and the snapshot are rendered from one source instead of a duplicated variant list.
-- FR-24: `llmError` MUST produce exactly the sentences of the catalogue in section 7.3 for each `(kind, variant)` by taking the row's template from `LLM_ERROR_TEMPLATES` and replacing `<p>` with the provider id, `<KEY>` with `keyEnv` and `<status>` with the status; the `auth` sentence MUST drop the `in <KEY>` clause when `keyEnv` is null; `model_not_found` MUST select the "model set in LLM_MODEL" variant when `isDefaultModel` is false and the "default model of this build" variant when it is true; `timeout` MUST select the sentence for the phase (`first` by default, `gap`, `total`, `probe`); `unknown` MUST include `(HTTP <status>)` only when a status is known.
-- FR-25: Every message MUST be one or two sentences in sentence case, MUST end with a period, MUST be at most 180 characters, MUST contain no newline and none of the characters `<`, `>`, `"`, `&` or backtick, MUST contain no lowercase `http` (a URL), and its runs of two or more capital letters MUST be limited to `API`, `HTTP`, `LLM_MODEL`, `LLM_TIMEOUT_MS` and the provider's `keyEnv`.
+- FR-23: `src/llm/errors.ts` MUST export `LlmErrorContext`, `TimeoutPhase`, `LlmErrorVariant` (a closed union of exactly the 13 variant ids of section 7.3), `LlmErrorTemplate`, `LlmErrorSelector`, `selectVariant(sel)`, `llmError(kind, ctx, o?)`, `kindForStatus(status, responseBody?)`, `isConnectionFailure(err)`, `CONNECTION_ERROR_CODES`, `LLM_ERROR_PLACEHOLDERS` (exactly `['<p>', '<KEY>', '<status>']`) and the frozen data table `LLM_ERROR_TEMPLATES` (the 13 `(kind, variant)` rows of the section 7.3 catalogue in table order, each `{ kind, variant, template }` with the template carrying only those placeholders; the entity of section 8.12, whose primary key `(kind, variant)` is unique and whose `variant` alone is unique), MUST render every message from that table through `selectVariant`, MUST fail `pnpm typecheck` when a 14th variant id is added or one is renamed without the union changing (a `satisfies` check over the union), and MUST be the single source of every `LlmError.message` produced under `src/llm` (the fake reuses it); the fake's bare-`fail` sentence is explicitly outside the table (FR-34); the table exists so the README troubleshooting glossary (OS-4) and the snapshot are rendered from one source instead of a duplicated variant list.
+- FR-24: `llmError` MUST produce exactly the sentences of the catalogue in section 7.3 for each `(kind, variant)` by resolving the variant with `selectVariant({ kind, noKey: ctx.keyEnv === null, isDefaultModel: ctx.isDefaultModel, phase: o?.phase, hasStatus: o?.status !== undefined })`, taking that row's template from `LLM_ERROR_TEMPLATES` and replacing `<p>` with the provider id, `<KEY>` with `keyEnv` and `<status>` with the status; the mapping MUST be: `auth` to `auth/nokey` when `keyEnv` is null (the `in <KEY>` clause dropped) and `auth/key` otherwise; `rate_limit` to `rate_limit`; `model_not_found` to `model_not_found/custom` ("model set in LLM_MODEL") when `isDefaultModel` is false and `model_not_found/default` ("default model of this build") when it is true; `timeout` to `timeout/<phase>` with `first` when no phase is given; `network` to `network`; `aborted` to `aborted`; `unknown` to `unknown/status` (with `(HTTP <status>)`) when a status is known and `unknown/nostatus` otherwise; a dimension a kind does not use MUST NOT change its variant; the selector MUST be total: every one of the 280 selector combinations (7 kinds x `noKey` x `isDefaultModel` x 5 phase values x `hasStatus`) resolves to exactly one existing row and every row is reached by at least one combination, enforced by an enumerating test (AC-66), so no failure can ever render as an empty sentence.
+- FR-25: Every message MUST be one or two sentences in sentence case, MUST end with a period, MUST be at most 180 characters, MUST equal its trimmed self, MUST contain no newline, no non-breaking space and none of the characters `<`, `>`, `"`, `&` or backtick (so no placeholder and no markup survives rendering, enforced over every row and every provider, AC-67), MUST use ASCII apostrophes only (none of U+2018, U+2019, U+201C, U+201D), MUST contain no lowercase `http` (a URL), and its runs of two or more capital letters MUST be limited to `API`, `HTTP`, `LLM_MODEL`, `LLM_TIMEOUT_MS` and the provider's `keyEnv`.
 - FR-26: `aiSdkClient.ts` MUST classify errors in this order: (1) `req.signal.aborted` to `aborted`; (2) a client timer fired to `timeout` with the phase `outcome()` reports (`probe` inside `probe()`); (3) `LoadAPIKeyError`, or an empty `apiKey`, to `auth`; (4) `NoSuchModelError` to `model_not_found`; (5) `RetryError` to the classification of its `lastError`; (6) `APICallError` with `statusCode` 401 or 403 to `auth`, 404 to `model_not_found`, 402, 429 or 498 to `rate_limit`, 408 or 500..599 (502, 503, 504 and 529 included) to `network`, 400 whose `responseBody` matches `/api key not valid|invalid api key|invalid_api_key|incorrect api key|authentication/i` to `auth`, 400 whose `responseBody` matches `/model_not_found|invalid model|unknown model|model .{0,60}(not found|does not exist)/i` to `model_not_found`, any other status to `unknown` with the status kept; (7) `APICallError` without `statusCode`, or `isConnectionFailure(err)` (a `TypeError` whose message is `fetch failed`, or an error whose own or `cause.code` is in `CONNECTION_ERROR_CODES`), to `network` without status; (8) `TypeValidationError`, `JSONParseError`, `NoContentGeneratedError`, an `AbortError` while neither signal fired, and anything else to `unknown` without status.
 - FR-27: `LlmError.status` MUST be present exactly when the kind was derived from an HTTP status (`auth`, `rate_limit`, `model_not_found`, `network` from 408 or a 5xx, `unknown` with status) and absent for `timeout`, `aborted`, connection failures and non-HTTP errors.
 - FR-28: Messages MUST be built from the templates only: provider text, response bodies, SDK messages, header values, the key and the model id MUST NOT enter a message; as a last resort every message MUST have any occurrence of `o.apiKey` (when it is 8 or more characters) replaced by `[redacted]`.
@@ -76,16 +79,16 @@ Decisions taken in this spec that the inputs left open (each recorded once, here
 ### `probe()`
 
 - FR-30: `probe()` MUST make one request with `messages: [{ role: 'user', content: PROBE_PROMPT }]`, `tools: {}`, `maxOutputTokens: PROBE_MAX_OUTPUT_TOKENS`, `maxRetries: 0`, the same `providerOptions` as `stream()`, and deadlines `{ timeoutMs: PROBE_TIMEOUT_MS, stallMs: PROBE_TIMEOUT_MS }` with a never-aborted caller signal.
-- FR-31: `probe()` MUST resolve `{ ok: true, ms }` where `ms` is the elapsed time (a `Date.now()` difference, an integer) at the first non-empty text-delta, after which the client aborts the request and that abort is not an error; a request that finishes with zero text (including one answered only by a tool call) MUST resolve `{ ok: true, ms }` with `ms` measured at `finish`.
+- FR-31: `probe()` MUST resolve `{ ok: true, ms }` where `ms` is the elapsed time (a `Date.now()` difference, an integer) at the first non-empty text-delta, after which the client MUST call `deadlines.firstToken()`, then `deadlines.abort()` (the self-abort that releases the request so at most `PROBE_MAX_OUTPUT_TOKENS` are billed; it records no outcome, so it is never an error and never a timeout sentence) and then `deadlines.clear()`, ignoring every later part, the SDK's `abort` part included; a request that finishes with zero text (including one answered only by a tool call) MUST resolve `{ ok: true, ms }` with `ms` measured at `finish`, followed by the same `abort()` then `clear()`.
 - FR-32: On failure `probe()` MUST resolve `{ ok: false, ms, error }` using the same classifier as `stream()`, a timer yielding the `timeout` / `probe` sentence; `probe()` MUST NOT throw, MUST keep no state between calls (concurrent probes are independent), and MUST NOT return the model's text.
 
 ### `src/llm/providers/fake.ts` (scripted provider)
 
-- FR-33: The fake's metadata MUST stay `id 'fake'`, `advertised false`, `description 'Scripted replies for tests and the simulator. No key and no network.'`, `keyEnv null`, `keyDescription 'No key needed.'`, `defaultModel 'scripted'`; `create({ model })` MUST return an `LlmClient` with `provider 'fake'` that uses `createDeadlines` and `llmError` with context `{ provider: 'fake', keyEnv: null, isDefaultModel: model === 'scripted' }`, no key and no network.
-- FR-34: The script MUST run over `text`, the last user message normalised as section 7.5 defines (trimmed, runs of whitespace collapsed to one space; matched case-insensitively on whole words), with precedence fail, then slow, then person, then human: `/\bfail(?:\s+(auth|rate_limit|timeout|network|model_not_found|aborted|unknown))?\b/` yields one error event, bare `fail` or an unrecognised word after it giving `{ kind: 'unknown', message: 'The fake provider failed on purpose.' }` and `fail <kind>` giving `llmError(kind, ctx)` (timeout with phase `first`); `/\bslow\b/` emits nothing until a deadline fires (the `timeout`/`first` sentence whichever timer fires, because no token is ever forwarded, FR-20; or `aborted` if the caller aborts first); `/\bperson\b/` with a declared tool named `handoff_to_team` emits `{ type: 'tool-call', toolCallId: 'fake-call-<n>', name: 'handoff_to_team', input: { reason: 'Caller asked for a person.', summary: cut('The caller asked to speak to a person. Last message: ' + text, 1000) } }` (`cut` and `text` as section 7.5 defines) then `finish` `tool-calls` with no turn text; `/\bhuman\b/` emits the words of `Sure, let me get someone for you.` as text-deltas then the same tool call and finish; `person` or `human` without `handoff_to_team` declared streams `I cannot transfer you right now, but I can keep helping here.` then `finish` `stop`; anything else streams `You said: <text>. How else can I help?`; an empty message streams `I did not catch that. Could you say it again?`.
+- FR-33: The fake's metadata MUST stay `id 'fake'`, `advertised false`, `description 'Scripted replies for tests and the simulator. No key and no network.'`, `keyEnv null`, `keyDescription 'No key needed.'`, `defaultModel 'scripted'`; `create({ model })` MUST return an `LlmClient` with `provider 'fake'` that uses `createDeadlines` (the same `Deadlines` shape as the AI SDK client, `abort()` included) and `llmError` with context `{ provider: 'fake', keyEnv: null, isDefaultModel: model === 'scripted' }`, no key and no network; the file MUST export `FAKE_FAIL_MESSAGE = 'The fake provider failed on purpose.'`, a sentence that is deliberately not a row of `LLM_ERROR_TEMPLATES` (section 8.12).
+- FR-34: The script MUST run over `text`, the last user message normalised as section 7.5 defines (trimmed, runs of whitespace collapsed to one space; matched case-insensitively on whole words), with precedence fail, then slow, then person, then human: `/\bfail(?:\s+(auth|rate_limit|timeout|network|model_not_found|aborted|unknown))?\b/` yields one error event, bare `fail` or an unrecognised word after it giving `{ kind: 'unknown', message: FAKE_FAIL_MESSAGE }` (no status) and `fail <kind>` giving `llmError(kind, ctx)` (timeout with phase `first`); `/\bslow\b/` emits nothing until a deadline fires (the `timeout`/`first` sentence whichever timer fires, because no token is ever forwarded, FR-20; or `aborted` if the caller aborts first); `/\bperson\b/` with a declared tool named `handoff_to_team` emits `{ type: 'tool-call', toolCallId: 'fake-call-<n>', name: 'handoff_to_team', input: { reason: 'Caller asked for a person.', summary: cut('The caller asked to speak to a person. Last message: ' + text, 1000) } }` (`cut` and `text` as section 7.5 defines) then `finish` `tool-calls` with no turn text; `/\bhuman\b/` emits the words of `Sure, let me get someone for you.` as text-deltas then the same tool call and finish; `person` or `human` without `handoff_to_team` declared streams `I cannot transfer you right now, but I can keep helping here.` then `finish` `stop`; anything else streams `You said: <text>. How else can I help?`; an empty message streams `I did not catch that. Could you say it again?`.
 - FR-35: A scripted reply MUST be split on single spaces and emitted word by word as text-deltas (each word followed by a space except the last, so the deltas joined equal the reply); the first word MUST be yielded on the first pull without any timer wait, later words about 25 ms apart; the combined `createDeadlines().signal` (never `req.signal` alone) MUST be checked before every word and during every wait, and when it is aborted the stream MUST end with the single terminal `outcome()` selects: `aborted` for the caller, the `timeout` sentence for the fired phase (a long echo cut by the total timer ends as `timeout`/`total`, EC-31); a text reply MUST end with `{ type: 'finish', finishReason: 'stop', usage: { inputTokens: words(req.messages), outputTokens: words(reply) } }` with `words` as section 7.5 defines.
 - FR-36: The handoff tool call's `reason` MUST be at most 200 characters and its `summary` at most 1000 characters with control characters stripped, so the input parses with the handoff_to_team zod schema; that `{ reason, summary }` shape is the blueprint's ToolSeam decision (reason and summary are the tool's only arguments), the schema itself is written by tools-and-automation-webhook, and section 7.7 records the obligation that it keeps accepting exactly this shape (no added required field) so the simulator's person and human path cannot silently break; `toolCallId` values MUST be distinct across the streams of one client, the counter being per client instance (closure state of `create()`, never module-level), so two fake clients each start at `fake-call-1`; a tool call MUST NOT be emitted for a tool that is not declared in `req.tools`.
-- FR-37: The fake's `probe()` MUST resolve exactly `{ ok: true, ms: 0 }`; every fake stream MUST emit exactly one terminal event, never throw, clear its deadlines on every exit, and keep no state between streams beyond the per-client tool-call counter; every scripted reply MUST end with punctuation.
+- FR-37: The fake's `probe()` MUST resolve exactly `{ ok: true, ms: 0 }`; every fake stream MUST emit exactly one terminal event, never throw, call `abort()` then `clear()` on its deadlines on every exit (the terminal, an early consumer exit and a fired timer included, so the fake exercises the same protocol as FR-17), and keep no state between streams beyond the per-client tool-call counter; every scripted reply MUST end with punctuation.
 - FR-38: The config surface for the fake MUST stay as it is: `LLM_PROVIDER=fake` accepted with the warning `LLM_PROVIDER: is a test provider that is not meant for real calls. Set it to one of openai, anthropic, google, mistral, groq when you are done testing.` and absent from the README table, `.env.example` and the valid-values sentence.
 
 ### Provider modules and low-latency defaults
@@ -103,10 +106,10 @@ Decisions taken in this spec that the inputs left open (each recorded once, here
 
 ### Documentation, tests and owner acceptance
 
-- FR-46: `README.md` MUST gain, outside the generated markers, a section headed `## Add a provider` listing in order: copy `src/llm/providers/groq.ts` to `providers/<id>.ts` and fill the fields (the `id` is at most 12 lowercase letters or digits, so every sentence stays within the 180-character bound); only for a new package, `pnpm add @ai-sdk/<id>@<exact version>` plus one entry in the sdk map of `src/llm/aiSdkClient.ts`; one line in `src/llm/registry.ts`; `pnpm docs:env` then `pnpm test`; and a short `## LLM providers` section stating that the default model is tuned for speed while a model set in `LLM_MODEL` runs with the provider's own settings, that the self-test waits up to 10 seconds, and that the AI SDK, its provider packages and zod are pinned exactly.
+- FR-46: `README.md` MUST gain, outside the generated markers, a section headed `## Add a provider` listing in order: copy `src/llm/providers/groq.ts` to `providers/<id>.ts` and fill the fields (the `id` is at most 12 lowercase letters or digits, so every sentence stays within the 180-character bound); only for a new package, `pnpm add @ai-sdk/<id>@<exact version>` plus one entry in the sdk map of `src/llm/aiSdkClient.ts`; one line in `src/llm/registry.ts`; `pnpm docs:env` then `pnpm test`; and a short `## LLM providers` section stating that the default model is tuned for speed while a model set in `LLM_MODEL` runs with the provider's own settings, that the self-test waits up to 10 seconds whatever `LLM_TIMEOUT_MS` says, that the AI SDK, its provider packages and zod are pinned exactly, and that `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL`, when set in the environment, are read by the provider packages themselves and redirect every request, so they should stay unset (EC-46; the server never reads them and never documents them as variables of its own).
 - FR-47: `docs/acceptance.md` MUST gain `## 2. LLM providers, owner-run live check` with the default-model source lines above a table whose Result cells are blank, the rows listed in section 8.10, and the sentence that it never blocks a build stage.
-- FR-48: The test suite MUST gain `test/llm/aiSdkClient.test.ts`, `test/llm/errors.test.ts`, `test/llm/deadlines.test.ts`, `test/llm/providers.test.ts` and `test/llm/fake.test.ts`, MUST remove the foundation test `stub clients honour the LlmClient contract`, MUST add the directory-scan test to `test/llm/registry.test.ts`, and every `test/llm` file MUST install a `fetch` guard in `beforeAll` that throws `network call escaped the mocks: <host>` for any request.
-- FR-49: The work MUST happen on `build/llm-providers` with commits as stages complete, MUST NOT push, add a remote or touch `main` or `release`, and every key-like literal in code, tests, fixtures or docs MUST be an obvious placeholder such as `sk-test-not-a-real-key-0123456789`.
+- FR-48: The test suite MUST gain `test/llm/aiSdkClient.test.ts`, `test/llm/errors.test.ts`, `test/llm/deadlines.test.ts`, `test/llm/providers.test.ts` and `test/llm/fake.test.ts`, MUST remove the foundation test `stub clients honour the LlmClient contract`, MUST add the directory-scan test to `test/llm/registry.test.ts`, MUST hold the 60-sentence snapshot in `test/llm/__snapshots__/errors.test.ts.snap`, the selector enumeration test and the placeholder test over `LLM_ERROR_TEMPLATES` in `test/llm/errors.test.ts` (AC-65 to AC-67), the `streamText` option-set test with a recorded `ai` module (AC-62) and the `Deadlines.abort()` tests (AC-63, AC-64), and every `test/llm` file MUST install a `fetch` guard in `beforeAll` that throws `network call escaped the mocks: <host>` for any request.
+- FR-49: The work MUST happen on `build/llm-providers` with commits as stages complete, MUST NOT push, add a remote or touch `main` or `release`, every key-like literal in code, tests, fixtures or docs MUST be an obvious placeholder such as `sk-test-not-a-real-key-0123456789`, the untracked SDK verification dumps at the repository root (`ai-index.d.ts`, `ai-test.d.ts`, `provider.d.ts`, `provider-utils.js`, `sdk-*.d.ts`, `sdk-*.js`, `sdk-*.mjs`) MUST be deleted before the stage commits and never committed (they are read by eslint's `**/*.ts` pattern and by `prettier --check .`, EC-48), and this revised spec MUST be formatted with `pnpm prettier --write specs/llm-providers.md` and committed on the branch so `pnpm lint` stays green (AC-71).
 
 ---
 
@@ -118,7 +121,7 @@ Decisions taken in this spec that the inputs left open (each recorded once, here
 - NFR-2: After the caller's signal aborts, the `aborted` terminal event MUST resolve within 100 ms (maximum over 20 repetitions under real timers, measured with `performance.now()` from `controller.abort()`).
 - NFR-3: A timeout terminal MUST arrive within `[stallMs, stallMs + 100 ms]` under real timers (`stallMs` 200, 10 repetitions) and at exactly `stallMs` (or `timeoutMs`) under fake timers for the `first`, `gap` and `total` phases, `stallMs === timeoutMs` included (AC-60).
 - NFR-4: `probe()` MUST settle within `PROBE_TIMEOUT_MS + 100 ms` on every path: under fake timers the promise is still pending at 9 999 ms and settled after advancing to 10 000 ms plus a microtask flush.
-- NFR-5: No handle MUST leak: after 100 sequential streams on one client sharing one caller signal, `getEventListeners(signal, 'abort').length === 0` and `vi.getTimerCount() === 0`; the vitest run exits without the "something prevents the main process from exiting" warning; a Node child process that only calls `createDeadlines` from `dist/llm/deadlines.js` exits with code 0 within 2 s.
+- NFR-5: No handle MUST leak: after 100 sequential streams on one client sharing one caller signal, `getEventListeners(signal, 'abort').length === 0` and `vi.getTimerCount() === 0`; `Deadlines.abort()` adds 0 listeners to the caller's signal (the count before and after a call is equal) and the self-abort after every terminal event leaves the count unchanged; the vitest run exits without the "something prevents the main process from exiting" warning; a Node child process that only calls `createDeadlines` from `dist/llm/deadlines.js` exits with code 0 within 2 s.
 - NFR-6: Consuming and discarding a stream of 10 000 deltas MUST raise `process.memoryUsage().heapUsed` by less than 20 MB, showing events are forwarded, not buffered.
 
 ### Performance
@@ -138,25 +141,25 @@ Decisions taken in this spec that the inputs left open (each recorded once, here
 
 ### Plain English and accessibility of the sentences
 
-- NFR-16: 100 % of the 60 catalogue sentences (5 advertised providers x 12 variants) plus the fake's own sentences MUST satisfy FR-25 (checked by a property test), with the next step in the second sentence and plain integers with units in words (`640 ms`), no thousands separators, currencies, dates or locale-specific formats.
-- NFR-17: The same sentence MUST be byte-identical wherever it is printed (the tokened page, `POST /selftest` JSON, the recent-problems detail, the README troubleshooting section), so find-in-page and a screen reader's search take a deployer from the page to the fix; consumers print `LlmError.message` verbatim and never re-word from `kind` (for `POST /selftest` this is the blueprint amendment proposed in section 7.7, which the status spec must adopt before the guarantee spans the page, the JSON and the README).
+- NFR-16: 100 % of the 60 catalogue sentences (5 advertised providers x 12 variants) plus the fake's own sentences MUST satisfy FR-25 (checked by a property test), with the next step in the second sentence, ASCII apostrophes only (the HTML renderer escapes them as `&#39;` and the status tests compare the decoded text), no non-breaking space, and plain integers with units in words (`640 ms`, `10 second self-test limit`), no thousands separators, currencies, dates or locale-specific formats; the longest shipped sentence measures exactly 176 characters (anthropic `unknown` with a status).
+- NFR-17: The same sentence MUST be byte-identical wherever it is printed (the tokened page, `POST /selftest` JSON, the recent-problems detail, the README troubleshooting section), so find-in-page and a screen reader's search take a deployer from the page to the fix; consumers print `LlmError.message` verbatim and never re-word from `kind` (for `POST /selftest` this is the blueprint amendment proposed in section 7.7, which the status spec must adopt before the guarantee spans the page, the JSON and the README). The guarantee rests on the `LLM_ERROR_TEMPLATES` entity of section 8.12: the 60 rendered strings equal the snapshot, every row substituted equals the `llmError` output for its variant, all 280 selector combinations resolve to exactly one of the 13 rows and every row is reached (coverage invariant, AC-66), and 0 of the 1 680 rendered messages (6 providers x 280 selectors) contain `<` or `>` (placeholder invariant, AC-67), so a deployer never sees `<KEY>` on the page and no failure renders as an empty sentence.
 - NFR-18: Meaning MUST never depend on colour or symbols: `kind` is a plain word and the sentence repeats the meaning in words; the status feature adds a visually hidden `Ok:` or `Failed:` prefix and announces the self-test result, and this feature guarantees the probe resolves within 10 s with either `ok` or a sentence, so a no-JavaScript form submit never spins and never shows an empty result.
 
 ### Build gates
 
-- NFR-19: On a clean clone `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm test` and `pnpm docs:env --check` MUST all exit 0 (the CI job), and `node_modules/ai/package.json` MUST report version 7.0.94.
+- NFR-19: On a clean clone `pnpm install --frozen-lockfile`, `pnpm lint` (eslint and `prettier --check .`, which covers `specs/llm-providers.md`), `pnpm typecheck`, `pnpm build`, `pnpm test` and `pnpm docs:env --check` MUST all exit 0 (the CI job), `node_modules/ai/package.json` MUST report version 7.0.94, and the repository root MUST carry no untracked file when the stage commits (`git status --porcelain` empty), so prettier and eslint never scan the SDK verification dumps (EC-48).
 
 ---
 
 ## Acceptance Criteria
 
-Every criterion is a Vitest case (or a CI step where stated). Placeholder keys are literals: `sk-test-not-a-real-key-0123456789` and `sk-env-must-not-be-used-0123456789`. "Mocked factory" means `vi.mock('@ai-sdk/<id>')` exporting the factory as a `vi.fn` that returns a model function (with a `chat` property for openai) resolving to a `MockLanguageModelV4` whose `doStream` returns `simulateReadableStream({ chunks, initialDelayInMs, chunkDelayInMs })` and records `options.abortSignal`.
+Every criterion is a Vitest case (or a CI step where stated). Placeholder keys are literals: `sk-test-not-a-real-key-0123456789` and `sk-env-must-not-be-used-0123456789`. "Mocked factory" means `vi.mock('@ai-sdk/<id>')` exporting the factory as a `vi.fn` that returns a model function (with a `chat` property for openai) resolving to a `MockLanguageModelV4` whose `doStream` returns `simulateReadableStream({ chunks, initialDelayInMs, chunkDelayInMs })` and records `options.abortSignal`. "The recorded `abortSignal`" is `doStreamCalls[i].abortSignal`, the combined `deadlines.signal` FR-12 hands to `streamText`; every assertion that it is aborted after a terminal event or after the probe's first token observes `Deadlines.abort()` (FR-17, FR-31). Revision 2 revised AC-1, AC-5, AC-10, AC-11, AC-13, AC-17, AC-18, AC-24, AC-25, AC-37, AC-42, AC-45, AC-49, AC-51 and AC-54 in place and added AC-62 to AC-71; the numbering of AC-1 to AC-61 is unchanged.
 
-### AC-1: Registry order, advertised ids and catalog shape are unchanged (FR-1, FR-2)
+### AC-1: Registry order, advertised ids, catalog shape and the locked seam files are unchanged (FR-1, FR-2)
 
-- **Given** `src/llm/registry.ts` after the feature and `test/llm/registry.test.ts`
-- **When** the registry suite runs
-- **Then** `providers.map(p => p.id)` equals `['openai','anthropic','google','mistral','groq','fake']`, `advertisedProviderIds` equals the first five, every `llmCatalog` entry has exactly the keys `advertised`, `defaultModel`, `description`, `id`, `keyDescription`, `keyEnv` and equals `JSON.parse(JSON.stringify(entry))`, and the fake entry has `advertised === false`.
+- **Given** `src/llm/registry.ts` and `src/llm/types.ts` after the feature, `test/llm/registry.test.ts`, and the foundation commit 3d4f2cf
+- **When** the registry suite runs and `git diff 3d4f2cf -- src/llm/types.ts src/llm/registry.ts` is executed
+- **Then** `providers.map(p => p.id)` equals `['openai','anthropic','google','mistral','groq','fake']`, `advertisedProviderIds` equals the first five, every `llmCatalog` entry has exactly the keys `advertised`, `defaultModel`, `description`, `id`, `keyDescription`, `keyEnv` and equals `JSON.parse(JSON.stringify(entry))`, the fake entry has `advertised === false`, and the git diff output is empty (both locked files byte-identical to the foundation).
 
 ### AC-2: createLlmClient is synchronous and performs no I/O (FR-3, NFR-7)
 
@@ -178,9 +181,9 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 
 ### AC-5: keyEnv equals the AI SDK package's own default variable (FR-5)
 
-- **Given** each installed `@ai-sdk/<id>` package resolved with `createRequire(import.meta.url).resolve('@ai-sdk/<id>')` and read from disk in a test file that does not `vi.mock` the package
-- **When** the resolved entry file's text is searched for the provider's `keyEnv` literal
-- **Then** for openai, anthropic, google, mistral and groq the literal is found (`indexOf > -1`).
+- **Given** each installed `@ai-sdk/<id>` package resolved with `createRequire(import.meta.url).resolve('@ai-sdk/<id>')` in a test file that does not `vi.mock` the package, and the resolved entry file read from disk
+- **When** the file text is searched for the JSON-quoted literal `"<keyEnv>"` of that provider
+- **Then** for openai, anthropic, google, mistral and groq `indexOf > -1` for `"OPENAI_API_KEY"`, `"ANTHROPIC_API_KEY"`, `"GOOGLE_GENERATIVE_AI_API_KEY"`, `"MISTRAL_API_KEY"` and `"GROQ_API_KEY"` respectively; the openai file also contains `OPENAI_BASE_URL` and the anthropic file `ANTHROPIC_BASE_URL` (the SDK-level environment reads recorded in EC-46), and the google, mistral and groq files contain no `_BASE_URL` literal.
 
 ### AC-6: Key and model reach the mocked factory unchanged and only lazily (FR-3, FR-10, FR-11)
 
@@ -206,17 +209,17 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 - **When** `stream()` runs
 - **Then** `createOpenAI` was called once with `baseURL === 'https://example.invalid/v1'`, the factory's `chat` spy was called once with `'m'`, the bare factory (Responses API) was not called, and the fetch guard count stays 0.
 
-### AC-10: One streamText call per step with the tool declared and never executed (FR-12, FR-15, FR-16)
+### AC-10: One streamText call per step with the tool declared as draft-07 JSON Schema and never executed (FR-12, FR-15, FR-16, FR-17)
 
 - **Given** a mock whose `doStream` returns chunks `stream-start`, `tool-input-start`, `tool-input-delta`, `tool-input-end`, `{ type: 'tool-call', toolCallId: 'call_1', toolName: 'handoff_to_team', input: '{"reason":"Caller asked for a person.","summary":"Wants a person."}' }`, `finish` with unified `tool-calls`; and `req.tools = [{ name: 'handoff_to_team', description: 'Hand the caller to a person.', inputSchema: z.object({ reason: z.string().max(200), summary: z.string().max(1000) }) }]`
-- **When** `stream(req)` is consumed
-- **Then** events deep-equal `[{ type: 'tool-call', toolCallId: 'call_1', name: 'handoff_to_team', input: { reason: 'Caller asked for a person.', summary: 'Wants a person.' } }, { type: 'finish', finishReason: 'tool-calls', ... }]`; `doStreamCalls.length === 1` (no second step, no tool-result); `doStreamCalls[0].tools` has exactly one entry with type `function`, name `handoff_to_team`, the description above and an `inputSchema` with `type 'object'`, `properties.reason.maxLength 200` and `properties.summary.maxLength 1000`; `doStreamCalls[0].abortSignal` is an `AbortSignal` that is aborted after the terminal event.
+- **When** `stream(req)` is consumed to the end
+- **Then** events deep-equal `[{ type: 'tool-call', toolCallId: 'call_1', name: 'handoff_to_team', input: { reason: 'Caller asked for a person.', summary: 'Wants a person.' } }, { type: 'finish', finishReason: 'tool-calls', ... }]`; `doStreamCalls.length === 1` (no second step, no tool-result); `doStreamCalls[0].tools` has exactly one entry with type `function`, name `handoff_to_team`, the description above and an `inputSchema` whose `$schema === 'http://json-schema.org/draft-07/schema#'`, `type === 'object'`, `properties.reason.maxLength === 200` and `properties.summary.maxLength === 1000`; `doStreamCalls[0].abortSignal` is an `AbortSignal` whose `aborted === true` after the terminal event (released by `deadlines.abort()`, AC-64); `vi.getTimerCount() === 0`.
 
-### AC-11: maxRetries 0 is observable on a retryable failure (FR-12, FR-26)
+### AC-11: maxRetries 0 and no stream retry are observable on a retryable failure (FR-12, FR-13, FR-26)
 
-- **Given** `doStream` rejecting with `new APICallError({ message: 'SDK-MESSAGE-MARKER', url: 'https://example.invalid', requestBodyValues: {}, statusCode: 503, responseBody: 'RESPONSE-BODY-MARKER', isRetryable: true })` and `vi.useFakeTimers()`
+- **Given** (a) `doStream` rejecting with `new APICallError({ message: 'SDK-MESSAGE-MARKER', url: 'https://example.invalid', requestBodyValues: {}, statusCode: 503, responseBody: 'RESPONSE-BODY-MARKER', isRetryable: true })`; (b) `doStream` resolving chunks `text-delta 'a'`, `{ type: 'error', error: <the same APICallError> }`, `text-delta 'b'`, `finish` `stop` with `chunkDelayInMs 0`; `vi.useFakeTimers()` in both
 - **When** `stream(req)` is consumed without advancing time
-- **Then** exactly one event `{ type: 'error', error: { kind: 'network', status: 503, message: 'The server could not reach the openai provider, or the provider is down. Check the provider's status page, then try again.' } }` is emitted, `doStreamCalls.length === 1`, and `vi.getTimerCount() === 0` afterwards (no retry back-off timer).
+- **Then** (a) exactly one event `{ type: 'error', error: { kind: 'network', status: 503, message: 'The server could not reach the openai provider, or the provider is down. Check the provider's status page, then try again.' } }`; (b) events deep-equal `[{ type: 'text-delta', text: 'a' }, <the same error event>]` and `'b'` is never emitted; in both cases `doStreamCalls.length === 1` (no retry, no re-run step) and `vi.getTimerCount() === 0` afterwards (no retry back-off timer).
 
 ### AC-12: Text deltas are forwarded verbatim, never coalesced, empty ones dropped (FR-16, NFR-8)
 
@@ -224,11 +227,11 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 - **When** the stream is consumed, and in a second run a mock emits 50 deltas under real timers with a timestamp taken on each side
 - **Then** events deep-equal `[{ type: 'text-delta', text: 'Hello' }, { type: 'text-delta', text: ' wor' }, { type: 'text-delta', text: 'ld.' }, { type: 'finish', finishReason: 'stop', usage: { inputTokens: 7, outputTokens: 3 } }]`; a delta containing accented letters, an emoji and CJK characters is forwarded byte-identical; the 50-delta run yields exactly 50 `text-delta` events and the maximum mock-to-consumer delay is under 5 ms.
 
-### AC-13: Unlisted stream parts are dropped (FR-16)
+### AC-13: Unlisted stream parts are dropped after touching the stall timer (FR-16, FR-20)
 
-- **Given** chunks that include `reasoning-start`, `reasoning-delta`, `reasoning-end`, `source` and `raw` parts between two text deltas
-- **When** consumed
-- **Then** the set of event types is exactly `{'text-delta', 'finish'}` and both deltas arrive in order.
+- **Given** chunks `reasoning-start`, `reasoning-delta`, `reasoning-end`, `source`, `raw` and `response-metadata` between two text deltas, with `req { stallMs: 500, timeoutMs: 10_000 }` and the unlisted parts spaced 400 ms apart under fake timers
+- **When** consumed with time advanced to 5_000
+- **Then** the set of event types is exactly `{'text-delta', 'finish'}`, both deltas arrive in order, and no `timeout` event occurs (every part re-armed the stall timer).
 
 ### AC-14: Malformed tool input and unknown tool names are forwarded, never an error (FR-15, FR-16)
 
@@ -248,17 +251,17 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 - **When** consumed
 - **Then** events contain exactly one element, `{ type: 'finish', finishReason: 'stop', ... }`, and no `text-delta`.
 
-### AC-17: Exactly one terminal, then the SDK request is cancelled and later parts ignored (FR-17)
+### AC-17: Exactly one terminal, then the request is released, timers cleared and later parts ignored (FR-17, FR-20, NFR-5)
 
-- **Given** chunks `text-delta 'a'`, `{ type: 'error', error: new APICallError({ statusCode: 500, ... }) }`, `text-delta 'b'`, `finish` `stop`, delivered with `chunkDelayInMs 0`
-- **When** consumed
-- **Then** events deep-equal `[{ type: 'text-delta', text: 'a' }, { type: 'error', error: { kind: 'network', status: 500, message: <network sentence> } }]`, the iterator's `next()` then returns `{ done: true }`, the recorded `abortSignal.aborted === true`, and `vi.getTimerCount() === 0`.
+- **Given** chunks `text-delta 'a'`, `{ type: 'error', error: new APICallError({ statusCode: 500, ... }) }`, `text-delta 'b'`, `finish` `stop`, delivered with `chunkDelayInMs 0`; the mock records `options.abortSignal`
+- **When** `stream(req)` is consumed with `for await`, `next()` is then called twice more on the same iterator, and a second `for await` runs over the same `stream()` result
+- **Then** events deep-equal `[{ type: 'text-delta', text: 'a' }, { type: 'error', error: { kind: 'network', status: 500, message: <the openai network sentence> } }]`; both extra `next()` calls resolve `{ done: true, value: undefined }`; the second iteration yields zero events and `doStreamCalls.length` stays 1; the recorded `abortSignal.aborted === true` (through `deadlines.abort()`); `vi.getTimerCount() === 0`; `getEventListeners(req.signal, 'abort').length === 0`.
 
-### AC-18: A consumer that stops early releases the request (FR-17, NFR-5)
+### AC-18: A consumer that stops early releases the request through the generator's finally (FR-17, FR-20, NFR-5)
 
-- **Given** a mock producing 50 deltas 10 ms apart
+- **Given** a mock producing 50 deltas 10 ms apart under real timers and a caller `AbortController`
 - **When** the consumer breaks out of `for await` after the first `text-delta`
-- **Then** within 100 ms the recorded `abortSignal.aborted === true`, the mock's stream is not pulled again, and `vi.getTimerCount() === 0`.
+- **Then** within 100 ms the recorded `abortSignal.aborted === true` (through `deadlines.abort()`), the mock's stream is not pulled again (pull count unchanged after 200 ms), `vi.getTimerCount() === 0`, `getEventListeners(controller.signal, 'abort').length === 0`, and the caller signal itself is not aborted.
 
 ### AC-19: createAiSdkClient, stream() and probe() never throw (FR-9, FR-13, FR-17, FR-32)
 
@@ -290,17 +293,17 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 - **When** consumed
 - **Then** the kinds are `auth`, `model_not_found`, `rate_limit` (status 429), `network`, `network`, `network`, `network`, `unknown`, `unknown`, `unknown`, `unknown`, and the `status` key is present only in the `RetryError` case.
 
-### AC-24: The sentence catalogue is snapshot-tested per advertised provider (FR-23, FR-24, NFR-17)
+### AC-24: The sentence catalogue is snapshot-tested per advertised provider and rendered only from LLM_ERROR_TEMPLATES (FR-23, FR-24, NFR-17)
 
-- **Given** `llmError(kind, { provider, keyEnv, isDefaultModel }, { status, phase })` for each of openai, anthropic, google, mistral, groq across `auth`, `rate_limit`, `model_not_found` (`isDefaultModel` false and true), `timeout` (phase `first`, `gap`, `total`, `probe`), `network`, `aborted`, `unknown` (status 418 and no status): 12 strings per provider
-- **When** rendered
-- **Then** the 60 strings equal `test/llm/__snapshots__/errors.test.ts.snap`; openai `auth` is `The openai provider rejected the API key in OPENAI_API_KEY. Check the key in your Railway variables, then redeploy.`; `llmError('auth', { provider: 'fake', keyEnv: null, isDefaultModel: true })` is `The fake provider rejected the API key. Check the key in your Railway variables, then redeploy.`; every `aborted` message is `The request was stopped before the provider finished.`; anthropic `timeout`/`probe` is `The anthropic provider did not start answering within the 10 second self-test limit. Try a faster model with LLM_MODEL, or run the self-test again.`; groq `rate_limit` is `The groq provider refused the request because of a rate or usage limit. Check your plan and billing with the provider, then try again.`; `LLM_ERROR_TEMPLATES` has exactly 13 rows in the order of the section 7.3 table, and for every row and provider the template with `<p>`, `<KEY>` and `<status>` replaced equals the `llmError` string for that variant.
+- **Given** `llmError(kind, { provider, keyEnv, isDefaultModel }, { status, phase })` for each of openai, anthropic, google, mistral, groq across `auth`, `rate_limit`, `model_not_found` (`isDefaultModel` false and true), `timeout` (phase `first`, `gap`, `total`, `probe`), `network`, `aborted`, `unknown` (status 418 and no status): 12 strings per provider, and the entity of section 8.12
+- **When** rendered and compared with `test/llm/__snapshots__/errors.test.ts.snap`
+- **Then** the 60 strings equal the snapshot; openai `auth` is `The openai provider rejected the API key in OPENAI_API_KEY. Check the key in your Railway variables, then redeploy.`; `llmError('auth', { provider: 'fake', keyEnv: null, isDefaultModel: true })` is `The fake provider rejected the API key. Check the key in your Railway variables, then redeploy.`; every `aborted` message is `The request was stopped before the provider finished.`; anthropic `timeout`/`probe` is `The anthropic provider did not start answering within the 10 second self-test limit. Try a faster model with LLM_MODEL, or run the self-test again.`; groq `rate_limit` is `The groq provider refused the request because of a rate or usage limit. Check your plan and billing with the provider, then try again.`; for every row of `LLM_ERROR_TEMPLATES` and every advertised provider, `template.replace('<p>', id).replace('<KEY>', keyEnv).replace('<status>', '418')` equals the `llmError` string of that variant (the table of section 8.12 is the only source of the sentences).
 
-### AC-25: Text rules hold for every message (FR-25, FR-45, NFR-16)
+### AC-25: Text and accessibility rules hold for every rendered message (FR-25, FR-45, NFR-16)
 
-- **Given** the 60 catalogue strings plus the fake provider's own sentences
+- **Given** the 60 catalogue strings plus the fake provider's own sentences (`FAKE_FAIL_MESSAGE` and the five scripted replies)
 - **When** checked by a property test in `test/llm/errors.test.ts`
-- **Then** each message ends with `.`, starts with an uppercase letter, contains no newline and none of `<`, `>`, `"`, `&`, backtick, has length at most 180, contains no lowercase `http`, and every run of two or more capital letters is one of `API`, `HTTP`, `LLM_MODEL`, `LLM_TIMEOUT_MS` or the provider's `keyEnv`; the longest string (anthropic `unknown` with status) measures 176.
+- **Then** each message ends with `.`, starts with an uppercase letter, equals `message.trim()`, contains no newline, no non-breaking space (U+00A0), none of `<`, `>`, `"`, `&`, backtick, none of U+2018, U+2019, U+201C, U+201D (ASCII apostrophes only), has length at most 180, splits on `. ` into at most 2 sentences, contains no lowercase `http`, and every match of `/[A-Z][A-Z0-9_]+/g` is one of `API`, `HTTP`, `LLM_MODEL`, `LLM_TIMEOUT_MS` or the provider's `keyEnv`; the longest string (anthropic `unknown` with status) measures 176; `llmError('unknown', { provider: 'a'.repeat(14), keyEnv: null, isDefaultModel: true }, { status: 418 })` measures 181 and fails the same length property (the 12-character id cap of AC-4 is what keeps shipped ids under the bound, EC-56).
 
 ### AC-26: Redaction and the last-resort key scrub (FR-28, NFR-13)
 
@@ -368,11 +371,11 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 - **When** consumed
 - **Then** (a) exactly one `aborted` event and `doStreamCalls.length === 0`; (b) the single terminal event has kind `aborted`, never `timeout`.
 
-### AC-37: Probe success returns ms to first token and cancels the rest (FR-8, FR-19, FR-30, FR-31)
+### AC-37: Probe success returns ms to the first word and self-aborts the rest without an error (FR-8, FR-19, FR-30, FR-31)
 
-- **Given** a mock with `initialDelayInMs 640`, then `text-delta 'OK'`, then 20 more deltas; fake timers
-- **When** `probe()` is awaited after advancing 640
-- **Then** the result deep-equals `{ ok: true, ms: 640 }` (no `error` key, no text); `doStreamCalls[0].maxOutputTokens === 16`; `doStreamCalls[0].tools` is empty or undefined; `JSON.stringify(doStreamCalls[0].prompt)` contains `Reply with the single word OK.`; `doStreamCalls[0].providerOptions` deep-equals what `stream()` sends for the same client; after resolution the recorded `abortSignal.aborted === true`; the module exports `PROBE_TIMEOUT_MS === 10_000`, `PROBE_MAX_OUTPUT_TOKENS === 16` and `PROBE_PROMPT === 'Reply with the single word OK.'`.
+- **Given** a mock with `initialDelayInMs 640`, then `text-delta 'OK'`, then 20 more deltas 10 ms apart; fake timers
+- **When** `probe()` is awaited after advancing 640, then time advances a further 1_000
+- **Then** the result deep-equals `{ ok: true, ms: 640 }` (`'error' in result === false`, no text anywhere in the result); `Number.isInteger(ms)`; `doStreamCalls[0].maxOutputTokens === 16`; `doStreamCalls[0].tools` is empty or undefined; `JSON.stringify(doStreamCalls[0].prompt)` contains `Reply with the single word OK.`; `doStreamCalls[0].providerOptions` deep-equals what `stream()` sends for the same client; the recorded `abortSignal.aborted === true` immediately after resolution (through `deadlines.abort()`); the later 20 deltas produce no unhandled rejection, no `console.error` call and no change to the resolved value; `vi.getTimerCount() === 0`; the module exports `PROBE_TIMEOUT_MS === 10_000`, `PROBE_MAX_OUTPUT_TOKENS === 16` and `PROBE_PROMPT === 'Reply with the single word OK.'`.
 
 ### AC-38: Probe zero tokens, errors, the 10 s budget and re-entrancy (FR-31, FR-32, NFR-4, NFR-18)
 
@@ -398,11 +401,11 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 - **When** consumed
 - **Then** text-deltas join to `I cannot transfer you right now, but I can keep helping here.` followed by `{ type: 'finish', finishReason: 'stop' }`, and no `tool-call` event is emitted.
 
-### AC-42: 'fail' and 'fail <kind>' yield the named kind (FR-24, FR-33, FR-34)
+### AC-42: 'fail' and 'fail <kind>' yield the named kind; the bare-fail sentence lives outside the table (FR-23, FR-24, FR-33, FR-34)
 
 - **Given** last user message, in turn: `fail`, `FAIL AUTH`, `fail rate_limit`, `fail network`, `fail model_not_found`, `fail timeout`, `fail aborted`, `fail unknown`, `fail bogus`
 - **When** consumed
-- **Then** each stream is exactly one error event; `fail` and `fail bogus` give `{ kind: 'unknown', message: 'The fake provider failed on purpose.' }`; `FAIL AUTH` gives kind `auth` with `The fake provider rejected the API key. Check the key in your Railway variables, then redeploy.`; `fail model_not_found` gives `The fake provider does not know the default model of this build. Set LLM_MODEL to a current model name from the provider's model list.`; `fail timeout` gives the fake's `timeout`/`first` sentence; `fail aborted` gives `The request was stopped before the provider finished.`; every `kind` field equals the named kind.
+- **Then** each stream is exactly one error event; `fail` and `fail bogus` give `{ kind: 'unknown', message: 'The fake provider failed on purpose.' }` with no `status`; `FAIL AUTH` gives kind `auth` with `The fake provider rejected the API key. Check the key in your Railway variables, then redeploy.`; `fail model_not_found` gives `The fake provider does not know the default model of this build. Set LLM_MODEL to a current model name from the provider's model list.`; `fail timeout` gives the fake's `timeout`/`first` sentence; `fail aborted` gives `The request was stopped before the provider finished.`; every `kind` field equals the named kind; `providers/fake.ts` exports `FAKE_FAIL_MESSAGE === 'The fake provider failed on purpose.'` and `LLM_ERROR_TEMPLATES.some(t => t.template === FAKE_FAIL_MESSAGE) === false`.
 
 ### AC-43: 'slow' waits for the shared deadlines (FR-20, FR-22, FR-34)
 
@@ -416,11 +419,11 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 - **When** consumed
 - **Then** the first yields the bare-fail `unknown` error; the second the timeout; the third the person branch (tool-call with no text-delta); the last two stream `I did not catch that. Could you say it again?` then `finish` `stop`.
 
-### AC-45: Abort between words, and the fake probe (FR-35, FR-37)
+### AC-45: Abort between words, the fake probe, and nothing left behind (FR-35, FR-37, NFR-5)
 
-- **Given** message `hello there friend`; the caller aborts after the 2nd `text-delta`
-- **When** drained, then `probe()` awaited
-- **Then** the events are 2 text-deltas then exactly one `aborted` event and nothing after; no timers remain; `probe()` resolves exactly `{ ok: true, ms: 0 }`.
+- **Given** message `hello there friend` with the caller aborting after the 2nd `text-delta`; then a normal echo run; then a `slow` run ended by the stall timer
+- **When** each stream is drained, then `probe()` is awaited
+- **Then** the abort run yields 2 text-deltas then exactly one `aborted` event and nothing after; after each of the three runs `vi.getTimerCount() === 0` and `getEventListeners(callerSignal, 'abort').length === 0`; `probe()` resolves exactly `{ ok: true, ms: 0 }`.
 
 ### AC-46: The import boundary rows for the new files (FR-7, FR-8, FR-22, FR-44, FR-45)
 
@@ -440,11 +443,11 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 - **When** read in a test and installed in CI
 - **Then** `dependencies.ai === '7.0.94'`, `@ai-sdk/openai === '4.0.62'`, `@ai-sdk/anthropic === '4.0.50'`, `@ai-sdk/google === '4.0.65'`, `@ai-sdk/mistral === '4.0.40'`, `@ai-sdk/groq === '4.0.38'`, `zod === '4.5.4'`, each matching `/^\d+\.\d+\.\d+$/`; `engines.node === '24.x'`; `packageManager === 'pnpm@11.10.0'`; `pnpm-lock.yaml` contains `ai@7.0.94` and each `@ai-sdk/<id>@<pin>`; neither `package-lock.json` nor `yarn.lock` exists; `node_modules/ai/package.json` version is `7.0.94`; `pnpm install --frozen-lockfile` exits 0 in CI.
 
-### AC-49: The SDK exports the names the tests rely on (FR-8, FR-43)
+### AC-49: The SDK and zod export the names the tests rely on (FR-8, FR-15, FR-43)
 
 - **Given** dynamic imports of `ai`, `ai/test` and `zod`
 - **When** evaluated in a test
-- **Then** `typeof MockLanguageModelV4 === 'function'` (from `ai/test`); `simulateReadableStream`, `streamText`, `tool` and `jsonSchema` are functions and `APICallError`, `LoadAPIKeyError`, `NoSuchModelError` and `RetryError` are constructors with a static `isInstance` (from `ai`); `typeof z.toJSONSchema === 'function'` (zod 4.5.4).
+- **Then** `typeof MockLanguageModelV4 === 'function'` and `new MockLanguageModelV4({}).specificationVersion === 'v4'` (from `ai/test`); `simulateReadableStream`, `streamText`, `tool` and `jsonSchema` are functions and `APICallError`, `LoadAPIKeyError`, `NoSuchModelError`, `RetryError`, `NoContentGeneratedError`, `TypeValidationError` and `JSONParseError` are constructors each with `typeof isInstance === 'function'` (from `ai`); `typeof z.toJSONSchema === 'function'` and `z.toJSONSchema(z.object({ a: z.string() }), { target: 'draft-07' }).$schema === 'http://json-schema.org/draft-07/schema#'` (zod 4.5.4); a rename on a bump fails this criterion loudly (EC-4).
 
 ### AC-50: Generated files follow the default-model change (FR-4, FR-41)
 
@@ -456,7 +459,7 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 
 - **Given** `README.md`
 - **When** read
-- **Then** a heading matching `/^## Add a provider/m` exists and its section names, in this order: copy `src/llm/providers/groq.ts` to `providers/<id>.ts`; `pnpm add @ai-sdk/<id>@<exact version>` plus one entry in the sdk map of `src/llm/aiSdkClient.ts` (only for a new package); one line in `src/llm/registry.ts`; `pnpm docs:env` then `pnpm test`; the first step states the 12-character limit on `id`; a heading matching `/^## LLM providers/m` exists whose text mentions `10 seconds`, `LLM_MODEL` and `pinned`; the whole README contains no bare token matching `/\bnpm\b/` (pnpm is allowed).
+- **Then** a heading matching `/^## Add a provider/m` exists and its section names, in this order: copy `src/llm/providers/groq.ts` to `providers/<id>.ts`; `pnpm add @ai-sdk/<id>@<exact version>` plus one entry in the sdk map of `src/llm/aiSdkClient.ts` (only for a new package); one line in `src/llm/registry.ts`; `pnpm docs:env` then `pnpm test`; the first step states the 12-character limit on `id`; a heading matching `/^## LLM providers/m` exists whose text mentions `10 seconds`, `LLM_MODEL`, `pinned`, `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` (EC-46); the whole README contains no bare token matching `/\bnpm\b/` (pnpm is allowed).
 
 ### AC-52: docs/acceptance.md section 2 is present, blank and never a gate (FR-42, FR-47, NFR-10, NFR-11)
 
@@ -470,11 +473,11 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 - **When** `pnpm test` runs with `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `MISTRAL_API_KEY` and `GROQ_API_KEY` unset
 - **Then** a grep for `stub clients honour the LlmClient contract` finds nothing; every `test/llm` file installs a fetch guard in `beforeAll` that throws `Error('network call escaped the mocks: <host>')`; a control test proves the guard is armed by calling `fetch('https://example.invalid/')` and expecting that error; the full suite passes.
 
-### AC-54: The stage stays on its branch with no remote and no secrets (FR-49, NFR-14)
+### AC-54: The stage stays on its branch with no remote, no secrets and no verification dumps (FR-49, NFR-14, NFR-19)
 
 - **Given** the repository during and after the stage
-- **When** `git branch --show-current`, `git remote -v` and `git status --porcelain` are run after the final commit, and the CI gitleaks job runs on the branch
-- **Then** the branch is `build/llm-providers`; `git remote -v` prints nothing; `git status --porcelain` is empty; gitleaks reports no findings (the only key-like literals are `sk-test-not-a-real-key-0123456789` and `sk-env-must-not-be-used-0123456789`).
+- **When** `git branch --show-current`, `git remote -v`, `git status --porcelain` and `git ls-files` are run after the final commit, and the CI gitleaks job runs on the branch
+- **Then** the branch is `build/llm-providers`; `git remote -v` prints nothing; `git status --porcelain` is empty (the untracked `ai-index.d.ts`, `ai-test.d.ts`, `provider.d.ts`, `provider-utils.js` and `sdk-*.d.ts` / `sdk-*.js` / `sdk-*.mjs` dumps are deleted, not committed); `git ls-files` matches none of `/^(ai-index\.d\.ts|ai-test\.d\.ts|provider\.d\.ts|provider-utils\.js|sdk-.*)$/`; gitleaks reports no findings (the only key-like literals are `sk-test-not-a-real-key-0123456789` and `sk-env-must-not-be-used-0123456789`).
 
 ### AC-55: The fake stays accepted by config and hidden from every list (FR-38)
 
@@ -518,19 +521,79 @@ Every criterion is a Vitest case (or a CI step where stated). Placeholder keys a
 - **When** `stream()` runs, and in a second run with `req.messages = [user '  ']` alone
 - **Then** `doStreamCalls[0].prompt` roles in order are system, user, assistant, assistant, tool, user (the two empty plain messages are gone); the 4th message has a tool-call part and no text part; the 5th has a tool-result part with `toolCallId 'call_1'` and output `{ type: 'text', value: '' }`; `JSON.stringify(doStreamCalls[0].prompt)` contains neither `"content":""` nor `"content":"   "`; the second run yields exactly one terminal event (`finish` if the SDK accepts an empty prompt, otherwise `error` `unknown` without status) and nothing throws.
 
+### AC-62: streamText receives exactly the pinned option set, streamRetries omitted and a void onError (FR-12, FR-13)
+
+- **Given** `vi.mock('ai', async (orig) => ({ ...(await orig()), streamText: vi.fn((await orig()).streamText) }))` so every call is recorded, a mocked factory, and a client with `providerOptions { openai: { reasoningEffort: 'none' } }`
+- **When** `stream(req)` with one declared tool and then `probe()` are run
+- **Then** `streamText` was called exactly twice; for the stream call the option object has `maxRetries === 0`, `abortSignal instanceof AbortSignal`, `providerOptions` deep-equal to the client's, `tools` with the declared name and no `execute` property, and `'streamRetries' in opts === false`, `'timeout' in opts === false`, `'onAbort' in opts === false`, `'stopWhen' in opts === false`, `'toolChoice' in opts === false`, `'maxOutputTokens' in opts === false`; `typeof opts.onError === 'function'` and `opts.onError({ error: new Error('x') })` returns `undefined` (never `{ retry: true }`, never a promise); for the probe call `maxOutputTokens === 16`, `maxRetries === 0`, `'streamRetries' in opts === false`, and the same void `onError`.
+
+### AC-63: Deadlines.abort() aborts the combined signal without recording an outcome and without adding a listener (FR-17, FR-20, FR-21, NFR-5)
+
+- **Given** fake timers, a caller `AbortController`, and `d = createDeadlines({ signal: controller.signal, timeoutMs: 1000, stallMs: 300 })` with `getEventListeners(controller.signal, 'abort').length` recorded right after creation
+- **When** (a) `d.abort()` is called at 100 then time advances to 2000; (b) `d.abort()` is called twice; (c) `d.clear()` then `d.abort()`; (d) `d.abort()` then `d.clear()`; (e) `d.firstToken()` at 50 then `d.abort()` at 100 then time advances to 2000; (f) the stall timer fires at 300 and `d.abort()` is called afterwards
+- **Then** (a) `d.signal.aborted === true` immediately, `d.outcome() === null` at 100 and still null at 2000, exactly one abort event fired on `d.signal`, `getEventListeners(controller.signal, 'abort').length` equals the recorded value (`abort()` added nothing) and `vi.getTimerCount() === 0` after the subsequent `clear()`; (b) no throw, still one abort event; (c) and (d) no throw, `signal.aborted === true`, `outcome() === null`, `vi.getTimerCount() === 0`, caller listener count 0; (e) `outcome() === null` (no `gap` or `total` is ever recorded after `abort()`); (f) `outcome() === 'first'` (`abort()` never erases a recorded outcome); the caller signal is never aborted by any of these calls.
+
+### AC-64: The terminal protocol self-aborts and clears after every terminal, so a finished turn never becomes a phantom timeout (FR-16, FR-17, FR-31)
+
+- **Given** (a) chunks `text-delta 'a'`, `finish` `stop`, `text-delta 'late'`, `{ type: 'abort' }` (the part the SDK emits after the self-abort) with `chunkDelayInMs 0` and `req { timeoutMs: 1000, stallMs: 1000 }`; (b) the same with a stall timer due at 1000 and time advanced to 5000 after the `finish` without `clear()` being called by the test; (c) `probe()` against a mock emitting `OK` at 640 then an `abort` part and 20 deltas
+- **When** (a) and (b) are consumed with `for await` and (c) is awaited, then time advances past every budget
+- **Then** (a) events deep-equal `[{ type: 'text-delta', text: 'a' }, { type: 'finish', finishReason: 'stop', ... }]`, `'late'` and the `abort` part produce nothing, the recorded `abortSignal.aborted === true`, `vi.getTimerCount() === 0` and `getEventListeners(req.signal, 'abort').length === 0`; (b) no second event, no timeout sentence, no `console.error` call; (c) the probe result stays `{ ok: true, ms: 640 }` with no `error` key and the `abort` part is ignored; a spy on the client's `Deadlines` (the exported `createDeadlines` wrapped with `vi.spyOn` on the module) shows `abort()` called before `clear()` exactly once per stream and per probe.
+
+### AC-65: LLM_ERROR_TEMPLATES is a constant of exactly 13 rows keyed by a closed variant enum, with a closed placeholder vocabulary (FR-23, FR-24, NFR-17)
+
+- **Given** `src/llm/errors.ts` and the entity of section 8.12
+- **When** `LLM_ERROR_TEMPLATES`, `LLM_ERROR_PLACEHOLDERS` and `FAKE_FAIL_MESSAGE` are read in `test/llm/errors.test.ts`
+- **Then** `LLM_ERROR_TEMPLATES.length === 13`; `templates.map(t => t.variant)` deep-equals `['auth/key','auth/nokey','rate_limit','model_not_found/custom','model_not_found/default','timeout/first','timeout/gap','timeout/total','timeout/probe','network','aborted','unknown/status','unknown/nostatus']` in that order; `templates.map(t => t.kind)` deep-equals `['auth','auth','rate_limit','model_not_found','model_not_found','timeout','timeout','timeout','timeout','network','aborted','unknown','unknown']`; `new Set(templates.map(t => `${t.kind}|${t.variant}`)).size === 13` and `new Set(variants).size === 13`; every template is a non-empty string that equals its trimmed self; `Object.isFrozen(LLM_ERROR_TEMPLATES) === true`; `LLM_ERROR_PLACEHOLDERS` deep-equals `['<p>', '<KEY>', '<status>']`; no template equals `FAKE_FAIL_MESSAGE`; a TypeScript compile-time check (a `satisfies` over the union of the 13 literal ids) fails `pnpm typecheck` if a 14th variant id is added or one is renamed.
+
+### AC-66: The selector resolves every reachable combination to exactly one row and reaches every row (FR-24, NFR-17)
+
+- **Given** the enumeration of 7 kinds x `noKey` {false, true} x `isDefaultModel` {false, true} x `phase` {undefined, `'first'`, `'gap'`, `'total'`, `'probe'`} x `hasStatus` {false, true} = 280 selectors
+- **When** `selectVariant(sel)` is called for each and `llmError(kind, ctx, { status: hasStatus ? 418 : undefined, phase })` is rendered for provider `openai` (`keyEnv 'OPENAI_API_KEY'`, or null when `noKey`)
+- **Then** every call returns a string that is the variant of exactly one row (`LLM_ERROR_TEMPLATES.filter(t => t.variant === v).length === 1`) and never throws; the union of returned variants equals the full set of 13; the mapping table of FR-24 holds (`auth` to `noKey ? 'auth/nokey' : 'auth/key'`; `rate_limit` to `'rate_limit'`; `model_not_found` to `isDefaultModel ? 'model_not_found/default' : 'model_not_found/custom'`; `timeout` to `'timeout/' + (phase ?? 'first')`; `network` to `'network'`; `aborted` to `'aborted'`; `unknown` to `hasStatus ? 'unknown/status' : 'unknown/nostatus'`); changing `noKey`, `isDefaultModel`, `phase` or `hasStatus` on a kind that does not use that dimension leaves the variant unchanged; every rendered message is a non-empty string ending in `.`, so no selector can produce an empty sentence.
+
+### AC-67: No placeholder survives rendering and no template uses an unknown placeholder (FR-25, NFR-16, NFR-17)
+
+- **Given** the 280 selectors of AC-66 rendered for each of the six providers (openai, anthropic, google, mistral, groq with their `keyEnv`; fake with `keyEnv` null), and every template of `LLM_ERROR_TEMPLATES`
+- **When** each rendered message is scanned for `<` and `>` and each template is scanned with `/<[^>]*>/g`
+- **Then** none of the 1 680 rendered messages contains `<` or `>`; every match in every template is one of `<p>`, `<KEY>`, `<status>`; `<KEY>` appears only in the `auth/key` row and `<status>` only in the `unknown/status` row; the `aborted` row contains no placeholder at all; for every advertised provider and every row, the rendered `llmError` string equals the template with the placeholders substituted and nothing else changed.
+
+### AC-68: kindForStatus and isConnectionFailure are total pure functions with the documented tables (FR-26, FR-27)
+
+- **Given** `kindForStatus`, `isConnectionFailure` and `CONNECTION_ERROR_CODES` imported from `src/llm/errors.ts`
+- **When** `kindForStatus(status, body)` is called for every integer status 100..599 with an undefined body, then for 400 with each body of AC-22, and `isConnectionFailure` is called with the fixtures of AC-23 plus `new Error('x')`, a string, `null` and `undefined`
+- **Then** `kindForStatus` returns `auth` for 401 and 403, `model_not_found` for 404, `rate_limit` for 402, 429 and 498, `network` for 408 and every 500..599, `unknown` for every other status; with the AC-22 bodies it returns `auth`, `auth`, `auth`, `model_not_found`, `model_not_found`, `model_not_found`, `unknown`; it never returns `timeout` or `aborted` and never throws; `isConnectionFailure` is true for `TypeError('fetch failed')` with or without a cause, for errors whose own or `cause.code` is in `CONNECTION_ERROR_CODES`, and false for `new Error('x')`, for an `APICallError` with a status, and for non-object inputs; `CONNECTION_ERROR_CODES` deep-equals `['ECONNREFUSED','ECONNRESET','ENOTFOUND','EAI_AGAIN','ETIMEDOUT','EPIPE','ECONNABORTED','EHOSTUNREACH','ENETUNREACH','UND_ERR_CONNECT_TIMEOUT','UND_ERR_SOCKET','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT']`.
+
+### AC-69: Tool schemas are converted with target draft-07, io input and unrepresentable any, and never throw (FR-15, FR-43)
+
+- **Given** `req.tools` with (a) the handoff schema of AC-10; (b) `z.object({ when: z.date(), n: z.number().transform(String) })`; (c) `z.object({ tag: z.string().default('x') })`
+- **When** `stream()` runs against a mock that finishes normally
+- **Then** (a) `doStreamCalls[0].tools[0].inputSchema.$schema === 'http://json-schema.org/draft-07/schema#'` and the schema contains no `2020-12`; (b) nothing throws, the tool is declared, and `inputSchema.properties.when` deep-equals `{}` (the `any` rendering); (c) `inputSchema.required` does not contain `tag` (`io 'input'` keeps defaulted fields optional); the source of `src/llm/aiSdkClient.ts` contains the literal `target: 'draft-07'` and not `'draft-7'`.
+
+### AC-70: The fake provider builds on the shared Deadlines for every exit path (FR-22, FR-34, FR-35, FR-37)
+
+- **Given** `createLlmClient({ provider: 'fake', apiKey: '' })` under fake timers; (a) a 2 000-word user message with `req { timeoutMs: 500, stallMs: 5000 }`; (b) two concurrent streams on the same client, `person` and `hello`, each with its own `AbortController`, the first aborted at 30 ms; (c) a `slow` stream with `{ timeoutMs: 400, stallMs: 400 }` and a spy on `createDeadlines`
+- **When** time advances
+- **Then** (a) text-deltas stream until exactly 500 ms, then the single terminal `{ kind: 'timeout', message: 'The fake provider took longer than the LLM_TIMEOUT_MS limit to finish. Try a faster model with LLM_MODEL, or raise LLM_TIMEOUT_MS.' }` and nothing after; (b) the aborted stream ends with exactly one `aborted` event while the other streams to `finish` `stop` with all its words, the two `toolCallId`s (when present) differ, and neither stream's timers leak (`vi.getTimerCount() === 0` after both); (c) `createDeadlines` was called once with `{ signal: req.signal, timeoutMs: 400, stallMs: 400 }`, the terminal at 400 is the `timeout`/`first` sentence for provider fake, and `abort()` then `clear()` were called on the returned `Deadlines` before the generator returned.
+
+### AC-71: The revised spec and the committed tree pass the lint gate (FR-49, NFR-19; human constraint 11c)
+
+- **Given** `specs/llm-providers.md` revised in place on `build/llm-providers` with sections 7.2, 7.4 and 8.6 amended for `abort()` and the Data Models entry 8.12 for `LLM_ERROR_TEMPLATES`
+- **When** `pnpm prettier --check specs/llm-providers.md` and `pnpm lint` run on the committed tree, and `git log --oneline -- specs/llm-providers.md` is read
+- **Then** both commands exit 0 with no `Code style issues` line; the spec still contains headings AC-1 through AC-61 in order plus AC-62 through AC-71; the Data Models section contains a heading naming `LLM_ERROR_TEMPLATES` with the primary key `(kind, variant)`, the 13-id closed enum and the placeholder vocabulary; section 7.4's `Deadlines` interface contains `abort(): void`; the log shows at least one commit after 3d4f2cf on `build/llm-providers` touching the spec.
+
 ---
 
 ## Edge Cases
 
-Every external dependency of this feature has at least one entry: the AI SDK core (`ai`), the five `@ai-sdk/*` packages, each vendor's HTTP API, the network stack (undici), zod, Node timers and `AbortSignal`, the mock (`ai/test`), the docs generator, pnpm and the registry, gitleaks, and the consumers (agent, status, README).
+Every external dependency of this feature has at least one entry: the AI SDK core (`ai`), the five `@ai-sdk/*` packages, each vendor's HTTP API, the network stack (undici), zod, Node timers and `AbortSignal`, the mock (`ai/test`), the docs generator, pnpm and the npm registry, gitleaks, the lint gate (eslint and prettier), the `src/main.ts` wiring, and the consumers (agent, status, README). EC-1 to EC-43 are the base revision; EC-44 to EC-56 were added at the contract-lock revision and are grouped at the end with their dependency named in the title.
 
 ### AI SDK core
 
 - EC-1: Two terminal parts in one stream. The mock emits an `error` part (APICallError 500) and then a `finish` part with unified `error`. Exactly one error event (kind `network`, status 500) is emitted, the finish is ignored, and the iterator is done afterwards (FR-17).
 - EC-2: The stream closes without any `finish` part. The reader closes after two text deltas. The client emits the two deltas then exactly one error `{ kind: 'unknown' }` without status, never hangs, and clears its timers (FR-16, FR-17).
 - EC-3: No `abort` part, only an `AbortError` rejection. After the client's stall timer fires the SDK rejects the read with an `AbortError` instead of emitting an abort part. The terminal kind still comes from `deadlines.outcome()`: `timeout`/`first`; the same set-up with the caller's signal yields `aborted`; the SDK's abort reason text is never read (FR-21).
-- EC-4: A version bump renames a test or stream name. A future bump of `ai` or `@ai-sdk/*` renames `MockLanguageModelV4` or a fullStream part: AC-49 fails loudly and the section 7.9 checklist must be re-run; a `package.json` change without a regenerated `pnpm-lock.yaml` fails `pnpm install --frozen-lockfile` in CI (FR-43).
-- EC-5: `simulateReadableStream` ignores the abort signal. The mock keeps emitting after the SDK `abortSignal` aborts. The client stops iterating on its own: nothing is emitted after the terminal event and the remaining chunks are never observed (FR-17).
+- EC-4: A version bump renames a test or stream name. A future bump of `ai` or `@ai-sdk/*` renames `MockLanguageModelV4`, a fullStream part, `text-delta.text`, `finish.totalUsage` or `streamRetries`: AC-49 and AC-62 fail loudly and the section 7.9 checklist must be re-run; a `package.json` change without a regenerated `pnpm-lock.yaml` fails `pnpm install --frozen-lockfile` in CI (FR-43).
+- EC-5: `simulateReadableStream` ignores the abort signal. The mock keeps emitting after the SDK `abortSignal` aborts (after a timer, the caller, or the client's own `deadlines.abort()`). The client stops iterating on its own (AC-17, AC-64): nothing is emitted after the terminal event and the remaining chunks are never observed; a test must not assume the mock stops (FR-17).
 - EC-6: `finishReason` `content-filter`. The locked `LlmFinishReason` has no such value, so it arrives as `other`; the agent cannot tell a filtered answer from another early stop and this is accepted (FR-16, OS-13).
 
 ### `@ai-sdk/*` packages
@@ -558,12 +621,12 @@ Every external dependency of this feature has at least one entry: the AI SDK cor
 
 ### zod
 
-- EC-21: Unrepresentable tool schema fields. A tool `inputSchema` containing `z.date()` or a transform is converted with `unrepresentable: 'any'` and the stream still runs (no throw, the tool is declared to the mock); if zod 3 were installed `z.toJSONSchema` would be missing and AC-49 fails (FR-15, FR-43).
+- EC-21: Unrepresentable tool schema fields and the target literal. A tool `inputSchema` containing `z.date()` or a transform is converted with `unrepresentable: 'any'` (`{}` per field) and the stream still runs (no throw, the tool is declared to the mock, AC-69); the base revision's `'draft-7'` literal works only through zod's legacy alias, so the implementation uses the typed `'draft-07'`, and a future zod that drops the alias cannot silently change the schema dialect; if zod 3 were installed `z.toJSONSchema` would be missing and AC-49 fails (FR-15, FR-43).
 
 ### Timers and signals
 
 - EC-22: Budgets below config's floor and zero. `req { timeoutMs: 1, stallMs: 1 }` yields exactly one `timeout`/`first` terminal at 1 ms and never throws; `timeoutMs 0` yields a `timeout`/`first` on the first pull with still exactly one terminal event (FR-20).
-- EC-23: A timer firing after `clear()`. `clear()` runs while a stall timer callback is already queued in the same macrotask batch; the callback is ignored, `outcome()` stays null, and no second terminal event is produced (FR-20).
+- EC-23: A timer firing after `clear()` or `abort()`. `clear()` or `abort()` runs while a stall timer callback is already queued in the same macrotask batch; the callback is ignored, `outcome()` stays null, and no second terminal event is produced (FR-17, FR-20).
 - EC-24: Caller signal reuse, late aborts and a shared abort. One caller signal reused across 100 sequential streams leaves 0 abort listeners after each stream; aborting after the terminal event produces no event and no throw; two concurrent streams sharing one signal each end with exactly one `aborted` event when it aborts once (FR-17, FR-20).
 
 ### Consumers of the stream
@@ -596,6 +659,22 @@ Every external dependency of this feature has at least one entry: the AI SDK cor
 - EC-41: An interrupted turn recorded as empty text. The agent stores the assistant turn truncated at the interrupt, which is `''` when the interrupt lands before the first word, and the caller's next utterance may itself be whitespace-only. FR-14 drops every plain message whose trimmed content is empty before the SDK call, so the anthropic provider, which rejects empty or whitespace-only text with HTTP 400, never sees it and one interrupt does not turn into an `llm_error` handoff on every later turn of the call; the tool-call variant loses only its text part and the tool-result variant is forwarded as is (FR-14, AC-61).
 - EC-42: Orphaned tool relations after the history cap. The 60-turn cap could cut between an assistant tool-call message and its tool result, or drop the assistant half of a step. OpenAI requires a tool message to follow the message carrying its tool call and Anthropic requires every tool result to match a tool use in the immediately preceding assistant turn, so such a prompt is answered with HTTP 400 (`unknown (HTTP 400)`) on every turn until the orphan leaves the window. The client forwards the history as given and repairs nothing; the obligation in section 7.7 (trim only at user-turn boundaries; keep or drop a step's tool call and tool result together) is agent-core's (FR-14).
 - EC-43: Parallel tool calls in one step. OpenAI returns several `tool-call` parts in one step by default; FR-16 forwards each one unchanged and FR-14 maps consecutive assistant tool-call messages independently. The locked `LlmMessage` carries one `toolCallId` per assistant message, so N calls can only be recorded as N consecutive assistant messages, each of which the providers require to be answered by a tool result before the next stream; the blueprint's agent executes at most one tool per turn, so how the unexecuted calls are represented is agent-core's decision under the section 7.7 obligation. `providerOptions.openai.parallelToolCalls: false` is a mitigation the owner may pick later as an additive `LOW_LATENCY` change (FR-14, FR-16, FR-40).
+
+### Added at the contract-lock revision
+
+- EC-44 (AI SDK core): The `streamRetries` trap re-speaks words to the caller. Setting `streamRetries: 0` (the natural "disable" reflex) enables an `onError`-requested retry, and an `onError` returning `{ retry: true }` re-runs the step and can re-emit deltas after words were already spoken; FR-12 omits `streamRetries` entirely and FR-13 makes `onError` return `undefined`; AC-11(b) and AC-62 fail if either changes (FR-12, FR-13).
+- EC-45 (AI SDK core): The self-abort after `finish` produces an SDK `abort` part. After a normal `finish` the client calls `deadlines.abort()`; `streamText` then emits `{ type: 'abort' }` on `fullStream`; because `outcome()` is null and the client has stopped reading, no timeout sentence, no second terminal and no recent-problems entry can result (AC-64); a regression that maps the `abort` part with `outcome()` null to `unknown` would surface here (FR-16, FR-17).
+- EC-46 (`@ai-sdk/*`): SDK-level environment reads redirect traffic. With `baseURL` undefined, `@ai-sdk/openai` 4.0.62 reads `OPENAI_BASE_URL` and `@ai-sdk/anthropic` 4.0.50 reads `ANTHROPIC_BASE_URL` from `process.env` (`loadOptionalSetting`), so a deployer-set `OPENAI_BASE_URL` silently redirects every request while `src/llm` itself never reads `process.env` (AC-58 stays true); keys are safe because a string `apiKey` (`''` included) short-circuits `loadApiKey`; the README `## LLM providers` section documents the two variables (FR-46, AC-51) rather than pinning vendor URLs in code (OS-20); AC-5 pins the literals in the installed packages (FR-10, FR-46).
+- EC-47 (npm dist-tags): `latest` drifts from 7.0.94 before implementation. Human constraint 2 requires re-verifying the current major immediately before writing `aiSdkClient.ts`; if `latest` has moved, the exact pins still install 7.0.94 deterministically, but every SDK-facing name in this spec (`MockLanguageModelV4`, the v4 chunk shapes, `streamRetries`, `createGoogleGenerativeAI`, the `reasoningEffort` union) must be re-derived and the pins, AC-48 and AC-49 updated together (FR-43).
+- EC-48 (lint gate): Untracked SDK verification dumps at the repository root. `ai-index.d.ts`, `ai-test.d.ts`, `provider.d.ts`, `provider-utils.js` and `sdk-*.d.ts` / `sdk-*.js` / `sdk-*.mjs` sit untracked at the root during this revision; eslint's `**/*.ts` pattern includes `.d.ts` files and `prettier --check .` scans them, so `pnpm lint` fails or hangs on 400 KB files if they remain; they are deleted before the stage commits (AC-54) and never committed (FR-49).
+- EC-49 (`src/main.ts` wiring): `LLM_PROVIDER` `''` would crash boot. Config yields `''` from its fallback path or an empty registry; `createLlmClient('')` throws the valid-values sentence, which at boot would violate ADR 0001; the integration feature builds no client and lets `POST /selftest` report the blocking config problem (section 7.7); AC-3 pins the throw so the guard cannot be forgotten silently (FR-1).
+- EC-50 (timers): A timer and `abort()` in the same macrotask. The stall timer's callback and a consumer-driven `abort()` (the `finish` arrived in the same tick) race; whichever runs first wins deterministically: a recorded outcome is never erased by `abort()` (AC-63f) and `abort()` before the callback leaves `outcome()` null (AC-63a); either way exactly one terminal is emitted, because the terminal was already chosen from the `finish` part (FR-17, FR-20).
+- EC-51 (v4 provider stream): `response-metadata` and other parts the base list omitted. The `LanguageModelV4` stream carries `response-metadata`, `fullStream` carries `reasoning-file`, `tool-output-denied`, `tool-approval-request` and `tool-approval-response`, and providers may add custom parts; anything not in the FR-16 mapping table is dropped after `touch()` (AC-13), never mapped to an error, so a new benign part type in a future provider release cannot end a call (FR-16).
+- EC-52 (garbage usage): Non-finite token counts. A `finish` part whose `totalUsage.inputTokens` is `NaN` or `Infinity` is `typeof 'number'` and `JSON.stringify` would render it as `null` in a `turn.timing` log line; FR-16 treats a non-finite count as absent (the `usage` field omitted), and AC-15's "no `null` in `JSON.stringify(event)`" check catches a leak when such a fixture is added (FR-16).
+- EC-53 (UTF-16): A surrogate pair split across two deltas. A provider may split an emoji into `'\ud83d'` and `'\ude00'` across deltas; the client forwards each string verbatim (never re-encodes or drops a lone surrogate) so the consumer's join reproduces the character; a "sanitising" change that strips lone surrogates would corrupt speech output and fail AC-12's verbatim check when this fixture is added (FR-16, NFR-8).
+- EC-54 (probe budget): A host that accepts the connection and never answers. `initialDelayInMs` beyond 10_000 with no bytes: the probe settles at exactly `PROBE_TIMEOUT_MS` under fake timers with the `timeout`/`probe` sentence and the SDK signal aborted (AC-38c); `LLM_TIMEOUT_MS` is never consulted, so a deployer with `LLM_TIMEOUT_MS` 120000 still gets a bounded status page (FR-30, FR-32, NFR-4).
+- EC-55 (prettier on the spec): Table and code-fence reflow. `prettier --write` reflows the markdown tables in this spec (sections 7.3, 7.5, 7.6, 8.x) and can widen a row past 100 columns; the revised spec is formatted after the last edit, and AC-71 fails if a later hand edit leaves `prettier --check` red (FR-49).
+- EC-56 (sentence length): A contributor id of 13 or more characters. The `unknown`/`status` sentence is 167 characters plus the id, so 13 lands exactly on the 180 bound (still passing the length property) and 14 exceeds it (AC-25 measures 181); the real guard is AC-4's `/^[a-z0-9]{1,12}$/` on every registered id, and the README's 12-character rule (FR-46) matches it; the property test alone would let a 13-character id ship (FR-4, FR-25).
 
 ---
 
@@ -709,28 +788,37 @@ export const PROBE_PROMPT = 'Reply with the single word OK.';
 streamText({
   model, // built lazily from the sdk map with { apiKey, baseURL? }
   messages: toModelMessages(req.messages), // mapping and the empty-content drop in FR-14
-  tools: toSdkTools(req.tools), // tool({ description, inputSchema: jsonSchema(z.toJSONSchema(schema, { target: 'draft-7', io: 'input', unrepresentable: 'any' })) }); no execute, no validate
-  abortSignal: deadlines.signal, // createDeadlines({ signal: req.signal, timeoutMs: req.timeoutMs, stallMs: req.stallMs })
-  maxRetries: 0,
+  tools: toSdkTools(req.tools), // tool({ description, inputSchema: jsonSchema(z.toJSONSchema(schema, { target: 'draft-07', io: 'input', unrepresentable: 'any' })) }); no execute, no validate
+  abortSignal: deadlines.signal, // createDeadlines({ signal: req.signal, timeoutMs: req.timeoutMs, stallMs: req.stallMs }): the single signal handed to the SDK
+  maxRetries: 0, // SDK default 2
   providerOptions: o.providerOptions,
-  onError: () => {}, // never the SDK default (console.error)
+  onError: () => {}, // void no-op: never the SDK default (console.error of the raw error), never a { retry: true } return
 });
-// Not used: timeout, onAbort, stopWhen (default stepCountIs(1)), toolChoice, maxOutputTokens.
+// NOT passed: streamRetries (OMITTED, not 0: the 7.0.94 doc says omitting it disables all stream-retry behaviour, while 0 lets
+// onError request one retry that re-runs the step), timeout, onAbort, stopWhen (default stepCountIs(1): no second step because
+// no tool has execute), toolChoice, maxOutputTokens (probe only), headers, fetch.
 ```
 
 Success responses (events, in order of arrival): zero or more `{ type: 'text-delta', text }` and `{ type: 'tool-call', toolCallId, name, input }`, then exactly one `{ type: 'finish', finishReason, usage? }`.
 
-Error responses (exactly one, then the iterator is done): `{ type: 'error', error: LlmError }` with `kind` from the table in 7.3; the client aborts its own controller, clears the timers and ignores later parts. `stream()` itself never throws and never rejects.
+Error responses (exactly one, then the iterator is done): `{ type: 'error', error: LlmError }` with `kind` from the table in 7.3. `stream()` itself never throws and never rejects.
+
+Terminal protocol (FR-17): after the one terminal event the client calls `deadlines.abort()` (aborts the combined signal handed to `streamText`, so the HTTP request is released; records no outcome, so `outcome()` stays null and no timeout sentence can follow) and then `deadlines.clear()` (both timers cleared, the caller listener removed, idempotent); every later part, the SDK's `abort` part caused by the self-abort included, is ignored; the generator's `finally` does the same when the consumer exits early; iterating one `stream()` result twice yields nothing and starts no request; concurrent streams on one client are independent.
 
 `probe()`:
 
 ```ts
-// Request: messages [{ role: 'user', content: PROBE_PROMPT }], tools {}, maxOutputTokens: PROBE_MAX_OUTPUT_TOKENS,
-// maxRetries 0, providerOptions as stream(), deadlines { timeoutMs: PROBE_TIMEOUT_MS, stallMs: PROBE_TIMEOUT_MS }, never-aborted caller signal.
-// Success: { ok: true, ms }   ms = elapsed Date.now() milliseconds (an integer) at the first non-empty text-delta (then the request is aborted, not an error),
-//                             or elapsed at finish when no text arrived (zero tokens still counts as ok).
-// Failure: { ok: false, ms, error: LlmError }  same classifier as stream(); a timer yields timeout with phase 'probe'.
-// Never throws; no state between probes; the model's text is never returned.
+// Request: messages [{ role: 'user', content: PROBE_PROMPT }], no tools, maxOutputTokens: PROBE_MAX_OUTPUT_TOKENS,
+// maxRetries 0, providerOptions as stream(), the same void onError, streamRetries omitted,
+// abortSignal: createDeadlines({ signal: <never-aborted AbortSignal>, timeoutMs: PROBE_TIMEOUT_MS, stallMs: PROBE_TIMEOUT_MS }).signal
+// (LLM_TIMEOUT_MS is NOT used).
+// Success: { ok: true, ms }   ms = elapsed Date.now() milliseconds (an integer) at the first non-empty text-delta, after which the
+//                             client calls deadlines.firstToken(), deadlines.abort() (a self-abort: not an error, outcome() null,
+//                             at most 16 output tokens billed) and deadlines.clear(); or elapsed at finish when no text arrived
+//                             (zero tokens and tool-call-only answers still count as ok), followed by the same abort() and clear().
+// Failure: { ok: false, ms, error: LlmError }  same classifier as stream(); a client timer yields timeout with phase 'probe'.
+// Never throws; settles within PROBE_TIMEOUT_MS plus one microtask on every path (a hung host included); no state between probes;
+// concurrent probes are independent; the model's text is never returned.
 ```
 
 ### 7.3 `src/llm/errors.ts` (new; pure; imports only `./types.js`)
@@ -742,17 +830,41 @@ export interface LlmErrorContext {
   isDefaultModel: boolean;
 }
 export type TimeoutPhase = 'first' | 'gap' | 'total' | 'probe';
+export type LlmErrorVariant =
+  // closed enum: exactly these 13 ids, in table order (section 8.12)
+  | 'auth/key'
+  | 'auth/nokey'
+  | 'rate_limit'
+  | 'model_not_found/custom'
+  | 'model_not_found/default'
+  | 'timeout/first'
+  | 'timeout/gap'
+  | 'timeout/total'
+  | 'timeout/probe'
+  | 'network'
+  | 'aborted'
+  | 'unknown/status'
+  | 'unknown/nostatus';
+export interface LlmErrorTemplate {
+  kind: LlmErrorKind;
+  variant: LlmErrorVariant;
+  template: string;
+}
+export const LLM_ERROR_TEMPLATES: readonly LlmErrorTemplate[]; // frozen; exactly 13 rows in table order; primary key (kind, variant), unique; variant alone unique
+export const LLM_ERROR_PLACEHOLDERS: readonly ['<p>', '<KEY>', '<status>']; // the closed placeholder vocabulary; no other '<...>' token exists in any template
+export interface LlmErrorSelector {
+  kind: LlmErrorKind;
+  noKey: boolean; // ctx.keyEnv === null
+  isDefaultModel: boolean;
+  phase?: TimeoutPhase; // timeout only; undefined -> 'first'
+  hasStatus: boolean; // status !== undefined
+}
+export function selectVariant(sel: LlmErrorSelector): LlmErrorVariant; // total: FR-24 mapping; every one of the 280 combinations -> exactly one row; every row reached (AC-66)
 export function llmError(
   kind: LlmErrorKind,
   ctx: LlmErrorContext,
   o?: { status?: number; phase?: TimeoutPhase },
-): LlmError; // renders from LLM_ERROR_TEMPLATES
-export interface LlmErrorTemplate {
-  kind: LlmErrorKind;
-  variant: string;
-  template: string;
-}
-export const LLM_ERROR_TEMPLATES: readonly LlmErrorTemplate[]; // the 13 catalogue rows below, in order; templates keep the literal <p>, <KEY>, <status>
+): LlmError; // = { kind, ...(o?.status !== undefined ? { status: o.status } : {}), message } with message = the selected row's template, <p> -> ctx.provider, <KEY> -> ctx.keyEnv, <status> -> String(o.status)
 export function kindForStatus(
   status: number,
   responseBody?: string,
@@ -794,7 +906,7 @@ The sentence catalogue (`<p>` = provider id, `<KEY>` = keyEnv, `<status>` = HTTP
 | unknown (no status)              | `The <p> provider returned an error the server does not recognise. Run the self-test again; if it keeps failing, open a GitHub issue with the text of this page.`                 |
 | fake, bare `fail`                | `The fake provider failed on purpose.` (kind unknown, no status)                                                                                                                  |
 
-Variant ids of `LLM_ERROR_TEMPLATES`, in table order: `auth/key`, `auth/nokey`, `rate_limit`, `model_not_found/custom`, `model_not_found/default`, `timeout/first`, `timeout/gap`, `timeout/total`, `timeout/probe`, `network`, `aborted`, `unknown/status`, `unknown/nostatus`; the fake's bare-`fail` sentence has no placeholder and no README entry, so it is not a table row. The README troubleshooting glossary (OS-4) renders the table with `<p>` shown as `<provider>` and `<KEY>` as is.
+Variant ids of `LLM_ERROR_TEMPLATES`, in table order: `auth/key`, `auth/nokey`, `rate_limit`, `model_not_found/custom`, `model_not_found/default`, `timeout/first`, `timeout/gap`, `timeout/total`, `timeout/probe`, `network`, `aborted`, `unknown/status`, `unknown/nostatus`; the type `LlmErrorVariant` is that closed set and nothing else; the fake's bare-`fail` sentence (`FAKE_FAIL_MESSAGE`, exported by `providers/fake.ts`) has no placeholder and no README entry, so it is deliberately not a table row. The table is the entity of section 8.12, which fixes its keys, the placeholder vocabulary and the two invariants (coverage and no surviving placeholder) that AC-65 to AC-67 enforce. The README troubleshooting glossary (OS-4) renders the 13 rows with `<p>` shown as `<provider>` and `<KEY>` and `<status>` as is.
 
 Measured lengths for the shipped ids (3-digit status): the `unknown` sentence with a status is 171 (groq), 173 (openai, google), 174 (mistral) and 176 (anthropic) characters, the range decision (f) records; every other sentence is at most 165 characters (anthropic `unknown` without status). Bound: 180 (FR-25); the `unknown` sentence with a status is 167 characters plus the id, so 13 is the exact edge and section 8.1 caps `id` at 12.
 
@@ -822,13 +934,20 @@ Kind table (applied in order; vendor codes checked 2026-09-09 against developers
 ```ts
 export type DeadlineOutcome = 'caller' | 'first' | 'gap' | 'total';
 export interface Deadlines {
-  readonly signal: AbortSignal; // combined: aborts when the caller's signal aborts or a timer fires
-  touch(): void; // any provider activity: re-arms the stall timer for stallMs (before the first token too)
+  readonly signal: AbortSignal; // combined: aborts when the caller's signal aborts, when a timer fires, or on abort(); aborted synchronously at creation when the caller's signal already is
+  touch(): void; // any provider activity (every fullStream part, empty deltas included): re-arms the stall timer for stallMs (before the first token too); no-op after clear()
   firstToken(): void; // first forwarded token: from here a timer reports 'gap' (stall) or 'total' (total) instead of 'first' (also touches)
   outcome(): DeadlineOutcome | null; // 'caller' whenever the caller's signal is aborted, even if a timer fired in the same tick;
   // otherwise recorded once by the first timer callback to run: 'first' for any timer before firstToken();
-  // after firstToken(): 'gap' for the stall timer, 'total' for the total timer, 'gap' on a same-tick tie
-  clear(): void; // idempotent: clears both timers, removes the caller listener
+  // after firstToken(): 'gap' for the stall timer, 'total' for the total timer, 'gap' on a same-tick tie;
+  // otherwise null. abort() and clear() never record anything; a timer firing after abort() or clear() is ignored
+  abort(): void; // revision 2, binding: idempotent; aborts the combined signal WITHOUT recording an outcome, so outcome() stays
+  // null and a self-abort never yields a timeout sentence; adds no listener to the caller signal (NFR-5's count is unaffected);
+  // never aborts the caller signal; never erases an outcome a timer already recorded. The mechanism FR-17 and FR-31 cite for
+  // releasing the HTTP request after every terminal event and after the probe's first token; FR-12 still hands streamText the
+  // single abortSignal deadlines.signal; an SDK 'abort' part arriving after the terminal is ignored; AC-10, AC-17, AC-18 and
+  // AC-37 observe abortSignal.aborted === true through it; providers/fake.ts builds on the same shape
+  clear(): void; // idempotent: clears both timers, removes the caller listener; safe before or after abort(); a callback already queued in the same macrotask is ignored
 }
 export function createDeadlines(o: {
   signal: AbortSignal;
@@ -836,8 +955,12 @@ export function createDeadlines(o: {
   stallMs: number;
 }): Deadlines;
 // Semantics: FR-20. Sentence from outcome(): 'caller' -> aborted; 'first' -> timeout/first; 'gap' -> timeout/gap;
-// 'total' -> timeout/total; inside probe() any timer -> timeout/probe. With stallMs === timeoutMs (what config produces)
-// only 'first' and 'total' are reachable. No exceptions are thrown by any member.
+// 'total' -> timeout/total; inside probe() any timer -> timeout/probe; null after abort() -> no sentence at all.
+// With stallMs === timeoutMs (what config produces) only 'first' and 'total' are reachable. No exceptions are thrown by any member.
+// Usage protocol: stream(): touch() on every part, firstToken() at the first forwarded token, terminal -> abort() then clear();
+// early consumer exit -> finally abort() then clear(). probe(): firstToken() then abort() then clear() at the first non-empty delta.
+// States: armed -> touched* -> first-token-seen -> exactly one of { fired (outcome recorded once) | caller-aborted ('caller') |
+// self-aborted (signal aborted, outcome null) } -> cleared.
 ```
 
 ### 7.5 `src/llm/providers/fake.ts` (scripted provider; LlmProviderModule values)
@@ -849,6 +972,8 @@ export const fake: LlmProviderModule = {
   keyEnv: null, keyDescription: 'No key needed.', defaultModel: 'scripted',
   create: ({ model }) => LlmClient { provider: 'fake', model }   // ctx { provider: 'fake', keyEnv: null, isDefaultModel: model === 'scripted' }
 };
+export const FAKE_FAIL_MESSAGE = 'The fake provider failed on purpose.'; // outside LLM_ERROR_TEMPLATES (section 8.12); kind unknown, no status
+// imports '../errors.js', '../deadlines.js' and '../types.js' only; the same Deadlines shape as the AI SDK client, abort() included
 ```
 
 | Trigger (last user message, trimmed, case-insensitive; precedence top to bottom)            | Events                                                                                                                                                                                                                                         |
@@ -867,7 +992,7 @@ Helpers (defined here so the script is reproducible):
 - `cut(s, max)`: first removes every control character (`/[\x00-\x1f\x7f]/g`), then truncates to the first `max` characters (`slice(0, max)`) with no ellipsis; the result is at most `max` characters long and contains no control character.
 - `words(s)`: `s.trim() === '' ? 0 : s.trim().split(/\s+/).length`; `words(req.messages)` is the sum of `words(content)` over every message of every role (`system`, `user`, `assistant`, `tool`), and `words(reply)` equals the number of text-deltas the reply produces (a reply is built from single-spaced text, so the two counts agree). AC-39: `You are a helpful agent.` plus `hello there` is 7; `You said: hello there. How else can I help?` is 9.
 
-Streaming: word by word (split on single spaces, each word followed by a space except the last, so the deltas joined equal the reply), the first word on the first pull without a timer wait, then about 25 ms between words; the combined `createDeadlines().signal` is checked before every word and during every wait, and an abort ends the stream with the one terminal `outcome()` selects (`aborted` for the caller, the `timeout` sentence for the fired phase). `probe()` resolves `{ ok: true, ms: 0 }`. The tool-call counter is per client instance. Error response shape is the shared `LlmError`; the fake never throws.
+Streaming: word by word (split on single spaces, each word followed by a space except the last, so the deltas joined equal the reply), the first word on the first pull without a timer wait, then about 25 ms between words; the combined `createDeadlines().signal` is checked before every word and during every wait, and an abort ends the stream with the one terminal `outcome()` selects (`aborted` for the caller, the `timeout` sentence for the fired phase); every exit (the terminal, an early consumer exit, a fired timer) calls `abort()` then `clear()` on the deadlines (FR-37, AC-70). `probe()` resolves `{ ok: true, ms: 0 }`. The tool-call counter is per client instance. Error response shape is the shared `LlmError`; the fake never throws.
 
 ### 7.6 Provider catalogue values and low-latency defaults (`src/llm/providers/*.ts`)
 
@@ -907,7 +1032,7 @@ interface SelfTestResponse {
 // while running: 'Testing the model, up to 10 seconds' with the button disabled; the no-JS form POST renders the same text.
 ```
 
-Recent problems (status buffer; agent-core records): `{ kind: 'llm_error', detail: `${error.kind}: ${error.message}` }` for every kind except `aborted`, the same `<reason>: <message>` shape as `ws_rejected`. Tokened "in use" line: `LLM: <provider>, <model>`.
+Recent problems (status buffer; agent-core records): `{ kind: 'llm_error', detail: `${error.kind}: ${error.message}` }` for every kind except `aborted`, the same `<reason>: <message>` shape as `ws_rejected`. Tokened "in use" line: `LLM: <provider>, <model>`. Open points for the status feature, listed in Appendix B: whether to skip the probe (or hide the button) while a blocking problem names the provider's `keyEnv`, because a client built with `apiKey ''` answers the `auth/key` sentence, which reads wrong for a merely missing key; whether a failed self-test is recorded into recent problems; whether the 10 second self-test limit is printed next to the in-use line when `LLM_TIMEOUT_MS` exceeds it.
 
 Log events (`src/llm` emits none; consumers quote `LlmClient` and `LlmError`):
 
@@ -954,10 +1079,15 @@ Verified 2026-09-09 from the npm registry dist-tags (re-checked while writing th
 
 API notes the implementer builds against (re-run this list on any bump):
 
-- `streamText` options used: `model`, `messages`, `tools`, `abortSignal`, `maxRetries` (default 2, set 0), `maxOutputTokens` (probe only), `providerOptions`, `onError` (default logs to `console.error`, always overridden). Available but unused: `timeout` (`{ totalMs, stepMs, firstChunkMs, chunkMs, toolMs }`), `onAbort`, `stopWhen` (default `stepCountIs(1)`), `toolChoice`.
+- `streamText` options used: `model`, `messages`, `tools`, `abortSignal`, `maxRetries` (default 2, set 0), `maxOutputTokens` (probe only), `providerOptions`, `onError` (default logs to `console.error`, always overridden with a void no-op). Available but unused: `timeout` (`{ totalMs, stepMs, firstChunkMs, chunkMs, toolMs }`), `onAbort`, `stopWhen` (default `stepCountIs(1)`), `toolChoice`, `headers`, `fetch`, and `streamRetries` (verified in the 7.0.94 declaration: "Set to 0 to disable automatic stream retries while allowing `onError` to request retries. Omit to disable all stream retry behavior. Default: 0."; `onError` is typed `StreamTextOnErrorCallback | StreamTextOnErrorRetryCallback | StreamTextOnErrorHandler`, and the retry-capable form returns `{ retry: true }` to re-run the current step while "partial output from a failed attempt that was already emitted cannot be retracted"; hence FR-12 omits the option and FR-13 returns `undefined`).
+- `fullStream` `abort` part: emitted as `{ type: 'abort', reason?: string }` whenever the `abortSignal` aborts, including after the client's own `deadlines.abort()` following a `finish`; the client has stopped reading by then (FR-17, EC-45).
+- `MockLanguageModelV4` (from `ai/test`) declares `specificationVersion = "v4"` and `doStreamCalls: LanguageModelV4CallOptions[]`; the `ai` entry re-exports `APICallError`, `LoadAPIKeyError`, `NoSuchModelError`, `NoContentGeneratedError`, `TypeValidationError` and `JSONParseError` from `@ai-sdk/provider` (each with a static `isInstance`) and declares `RetryError` itself.
+- Provider packages and the environment: `@ai-sdk/openai` 4.0.62 resolves `baseURL` with `loadOptionalSetting` from `OPENAI_BASE_URL` and the key from `"OPENAI_API_KEY"` only when `apiKey` is not a string; `@ai-sdk/anthropic` 4.0.50 does the same with `ANTHROPIC_BASE_URL` and `"ANTHROPIC_API_KEY"`; the google, mistral and groq packages carry their key literal and no base-URL variable (AC-5, EC-46). `reasoningEffort` in 4.0.62 is typed `'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'none' | 'minimal'`; `thinkingConfig.thinkingBudget` in 4.0.65 is typed `number`.
+- zod 4.5.4: `z.toJSONSchema(schema, { target?: 'draft-04' | 'draft-07' | 'draft-2020-12' | 'openapi-3.0' | ({} & string), io?: 'input' | 'output', unrepresentable?: 'throw' | 'any' })`; the implementation normalises the legacy `'draft-7'` to `'draft-07'`, so the SDK's own `zod4Schema` still works with the alias, while this client passes the typed `'draft-07'` (FR-15).
 - `fullStream` (`TextStreamPart`) parts and fields: `text-delta { id, text }`; `tool-call { toolCallId, toolName, input, invalid?, error?, dynamic?, providerExecuted? }`; `tool-error`; `tool-result`; `tool-input-start`/`delta`/`end`; `start`; `start-step { request, warnings }`; `finish-step { usage, finishReason, rawFinishReason, response }`; `finish { finishReason, rawFinishReason, totalUsage }`; `error { error: unknown }`; `abort { reason?: string }`; `reasoning-delta`; `source`; `file`; `raw`; `custom`.
 - `FinishReason`: `'stop' | 'length' | 'content-filter' | 'tool-calls' | 'error' | 'other'`; `LanguageModelUsage { inputTokens?, outputTokens?, totalTokens?, inputTokenDetails?, outputTokenDetails? }`.
-- `tool({ description, inputSchema: Zod | JSON Schema, execute? })`: `execute` is optional; without it the tool call is forwarded and no tool-result is produced. `jsonSchema(schema, { validate? })` with `validate` omitted skips validation (the raw value is returned). The SDK itself converts zod v4 with `z.toJSONSchema(schema, { target: 'draft-7', io: 'input' })`.
+- `tool({ description, inputSchema: Zod | JSON Schema, execute? })`: `execute` is optional; without it the tool call is forwarded and no tool-result is produced. `jsonSchema(schema, { validate? })` with `validate` omitted skips validation (the raw value is returned). The SDK itself converts zod v4 with `z.toJSONSchema(schema, { target: 'draft-7', io: 'input' })` (the legacy alias); this client converts with the typed `'draft-07'` and `unrepresentable: 'any'` (FR-15, AC-69).
+- `fullStream` parts the base list omitted, verified in the 7.0.94 union: `reasoning-file { file }`, `tool-output-denied`, `tool-approval-request`, `tool-approval-response`; the v4 provider stream also carries `response-metadata`; all dropped after `touch()` (FR-16, EC-51).
 - Invalid input or an unknown tool name: `parseToolCall` returns `{ type: 'tool-call', invalid: true, dynamic: true, error, ... }` and the stream forwards it; no error part.
 - Abort: when `abortSignal` aborts the stream emits `{ type: 'abort', reason: getErrorMessage(signal.reason) }` (free text, never relied on); an `AbortError` while the signal is aborted becomes that abort part, otherwise the stream errors (caught by the client).
 - Errors: emitted as `{ type: 'error', error }` parts and passed to `onError`; classes exported from `ai`: `APICallError { statusCode?, responseBody?, responseHeaders?, isRetryable, url, cause? }` with static `isInstance`, `LoadAPIKeyError`, `NoSuchModelError { modelId, modelType }`, `RetryError { lastError, errors, reason }`, `NoSuchToolError`, `InvalidToolInputError`, `TypeValidationError`, `JSONParseError`, `NoContentGeneratedError`.
@@ -986,6 +1116,15 @@ const mockModel = new MockLanguageModelV4({
 globalThis.fetch = (input) => {
   throw new Error(`network call escaped the mocks: ${new URL(String(input)).host}`);
 };
+// Option-set recorder (AC-62): the real streamText wrapped so every call's option object is inspectable:
+vi.mock('ai', async (orig) => ({
+  ...(await orig()),
+  streamText: vi.fn((await orig()).streamText),
+}));
+// Deadlines spy (AC-64, AC-70): vi.spyOn on the exported createDeadlines of src/llm/deadlines.js records abort() before clear().
+// Snapshot: test/llm/__snapshots__/errors.test.ts.snap holds the 60 rendered sentences (5 advertised providers x 12 variants);
+// the enumeration test (280 selectors) and the placeholder test (1 680 rendered messages) run over LLM_ERROR_TEMPLATES (AC-65 to AC-67).
+// Markers 'RESPONSE-BODY-MARKER' and 'SDK-MESSAGE-MARKER' must never appear in any emitted message or JSON.stringify(event).
 // Chunk fixtures (v4): text = stream-start, text-start, text-delta{delta} x n, text-end, finish{ finishReason: { unified: 'stop' }, usage };
 // tool = tool-input-start/delta/end, tool-call{ input: JSON text }, finish{ unified: 'tool-calls' };
 // errors = doStream rejecting with new APICallError({ statusCode, responseBody, url: 'https://example.invalid', requestBodyValues: {} }),
@@ -1058,16 +1197,17 @@ No database and nothing on disk at runtime: every entity below lives in process 
 
 ### 8.6 Deadlines (new)
 
-| Entity          | Field                            | Type                                      | Constraints                                                                                                                                                                                                                                                               |
-| --------------- | -------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Deadlines       | signal                           | AbortSignal                               | combined; aborted synchronously at creation when the caller's signal already is                                                                                                                                                                                           |
-| Deadlines       | touch                            | () => void                                | re-arms the stall timer for stallMs; no-op after clear()                                                                                                                                                                                                                  |
-| Deadlines       | firstToken                       | () => void                                | from here a timer reports `gap` (stall) or `total` (total) instead of `first`; also touches                                                                                                                                                                               |
-| Deadlines       | outcome                          | () => DeadlineOutcome \| null             | `'caller'` whenever the caller's signal is aborted; else recorded once by the first timer callback to run: `'first'` for any timer before firstToken(), after it `'gap'` for the stall timer and `'total'` for the total timer with `'gap'` on a same-tick tie; else null |
-| Deadlines       | clear                            | () => void                                | idempotent; clears both timers and the caller listener                                                                                                                                                                                                                    |
-| DeadlineOutcome | value                            | `'caller' \| 'first' \| 'gap' \| 'total'` | maps to aborted, timeout/first, timeout/gap, timeout/total (probe: any timer maps to timeout/probe)                                                                                                                                                                       |
-| TimeoutPhase    | value                            | `'first' \| 'gap' \| 'total' \| 'probe'`  | the `phase` option of `llmError` for kind timeout; default `first`                                                                                                                                                                                                        |
-| LlmErrorContext | provider, keyEnv, isDefaultModel | string, string \| null, boolean           | the three inputs every sentence needs; built once per client                                                                                                                                                                                                              |
+| Entity          | Field                            | Type                                      | Constraints                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------- | -------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deadlines       | signal                           | AbortSignal                               | combined; aborted synchronously at creation when the caller's signal already is                                                                                                                                                                                                                                                                                                                                                                                               |
+| Deadlines       | touch                            | () => void                                | re-arms the stall timer for stallMs; no-op after clear()                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Deadlines       | firstToken                       | () => void                                | from here a timer reports `gap` (stall) or `total` (total) instead of `first`; also touches                                                                                                                                                                                                                                                                                                                                                                                   |
+| Deadlines       | outcome                          | () => DeadlineOutcome \| null             | `'caller'` whenever the caller's signal is aborted; else recorded once by the first timer callback to run: `'first'` for any timer before firstToken(), after it `'gap'` for the stall timer and `'total'` for the total timer with `'gap'` on a same-tick tie; else null; `abort()` and `clear()` never record anything and a timer firing after either is ignored                                                                                                           |
+| Deadlines       | abort                            | () => void                                | revision 2, binding: idempotent; aborts the combined `signal` WITHOUT recording an outcome (so `outcome()` stays null and a self-abort never yields a timeout sentence); adds no listener to the caller signal (NFR-5's count unaffected); never aborts the caller signal; never erases a recorded outcome; the mechanism FR-17 and FR-31 cite for releasing the HTTP request after every terminal event and after the probe's first token; the fake builds on the same shape |
+| Deadlines       | clear                            | () => void                                | idempotent; clears both timers and the caller listener; safe before or after `abort()`; a callback already queued in the same macrotask is ignored                                                                                                                                                                                                                                                                                                                            |
+| DeadlineOutcome | value                            | `'caller' \| 'first' \| 'gap' \| 'total'` | maps to aborted, timeout/first, timeout/gap, timeout/total (probe: any timer maps to timeout/probe)                                                                                                                                                                                                                                                                                                                                                                           |
+| TimeoutPhase    | value                            | `'first' \| 'gap' \| 'total' \| 'probe'`  | the `phase` option of `llmError` for kind timeout; default `first`                                                                                                                                                                                                                                                                                                                                                                                                            |
+| LlmErrorContext | provider, keyEnv, isDefaultModel | string, string \| null, boolean           | the three inputs every sentence needs; built once per client                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ### 8.7 Fake provider script row (new; one per trigger)
 
@@ -1117,6 +1257,43 @@ No database and nothing on disk at runtime: every entity below lives in process 
 | finishReason          | `{ unified: FinishReason; raw?: string }`                                                                                                                                                                                                              | `unified` drives the mapping in FR-16                                                              |
 | usage                 | `{ inputTokens: { total, ... }; outputTokens: { total, ... } }` \| undefined                                                                                                                                                                           | `total` fields become `LlmUsage`; undefined usage, or both totals undefined, yields no `usage` key |
 
+### 8.12 `LLM_ERROR_TEMPLATES` / `LlmErrorTemplate` (new; the sentence catalogue as data; revision 2, binding)
+
+A frozen in-memory constant exported by `src/llm/errors.ts` (FR-23); the single source of every `LlmError.message` produced under `src/llm`, of the 60-sentence snapshot (AC-24) and of the README troubleshooting glossary (OS-4). NFR-17's byte-identical guarantee rests on this entity.
+
+| Field    | Type                                                                                                                                                                                                                                                                    | Constraints                                                                                                                                                                                                                                                                                                                  |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| kind     | `'auth' \| 'rate_limit' \| 'timeout' \| 'network' \| 'model_not_found' \| 'aborted' \| 'unknown'`                                                                                                                                                                       | the locked `LlmErrorKind`; every one of the seven kinds has at least one row                                                                                                                                                                                                                                                 |
+| variant  | `LlmErrorVariant` = `'auth/key' \| 'auth/nokey' \| 'rate_limit' \| 'model_not_found/custom' \| 'model_not_found/default' \| 'timeout/first' \| 'timeout/gap' \| 'timeout/total' \| 'timeout/probe' \| 'network' \| 'aborted' \| 'unknown/status' \| 'unknown/nostatus'` | a closed enum of exactly these 13 ids in this (table) order: auth x2, rate_limit, model_not_found x2, timeout x4, network, aborted, unknown x2; unique on its own; a 14th id or a rename fails `pnpm typecheck` (a `satisfies` check) and AC-65; the prefix before `/` (or the whole id) equals `kind`                       |
+| template | string                                                                                                                                                                                                                                                                  | non-empty, equal to its trimmed self; the sentence of section 7.3 for the variant, verbatim, carrying only placeholders from `LLM_ERROR_PLACEHOLDERS`; `<KEY>` appears only in `auth/key`, `<status>` only in `unknown/status`, `<p>` in every row except `aborted`, which carries no placeholder; obeys FR-25 once rendered |
+
+Keys, cardinality and membership:
+
+| Property          | Constraint                                                                                                                                                                                                                                                                                                                 |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Primary key       | `(kind, variant)`, unique; `variant` alone is also unique; the row order is the section 7.3 table order                                                                                                                                                                                                                    |
+| Cardinality       | exactly 13 rows, `Object.isFrozen(LLM_ERROR_TEMPLATES) === true`; no empty state and no loading state exist (a constant), so a missing row can only fail a test at build, never render an empty message at runtime                                                                                                         |
+| Outside the table | the fake provider's bare-`fail` sentence `The fake provider failed on purpose.` (`FAKE_FAIL_MESSAGE`, exported by `src/llm/providers/fake.ts`; kind `unknown`, no status) is explicitly not a row: no placeholder, no README entry; `LLM_ERROR_TEMPLATES.some((t) => t.template === FAKE_FAIL_MESSAGE) === false` (AC-42)  |
+| Placeholders      | `LLM_ERROR_PLACEHOLDERS = ['<p>', '<KEY>', '<status>']` is the closed vocabulary: every match of `/<[^>]*>/g` in every template is one of the three (AC-67); `<p>` renders as the provider id, `<KEY>` as `keyEnv`, `<status>` as the HTTP status; the README glossary shows `<p>` as `<provider>` and the other two as is |
+
+Selector (`LlmErrorSelector`, the input of `selectVariant`, FR-24):
+
+| Field          | Type                                                  | Derived from                                            | Effect                                                             |
+| -------------- | ----------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------ |
+| kind           | `LlmErrorKind`                                        | the classifier (section 7.3 kind table) or the fake     | picks the kind's row group                                         |
+| noKey          | boolean                                               | `ctx.keyEnv === null`                                   | `auth` only: `auth/nokey` when true, `auth/key` when false         |
+| isDefaultModel | boolean                                               | `model === defaultModel` by value                       | `model_not_found` only: `/default` when true, `/custom` when false |
+| phase          | `'first' \| 'gap' \| 'total' \| 'probe'` \| undefined | `deadlines.outcome()`; `probe` inside `probe()`         | `timeout` only: `timeout/<phase>`, `first` when undefined          |
+| hasStatus      | boolean                                               | `status !== undefined` (an HTTP status was seen, FR-27) | `unknown` only: `/status` when true, `/nostatus` when false        |
+
+Invariants (each enforced by a test in `test/llm/errors.test.ts`):
+
+- Coverage (AC-66): the selector is total. Every one of the 280 combinations (7 kinds x `noKey` {false, true} x `isDefaultModel` {false, true} x `phase` {undefined, `first`, `gap`, `total`, `probe`} x `hasStatus` {false, true}) resolves to exactly one existing row, and every one of the 13 rows is reached by at least one combination; a dimension a kind does not use never changes its variant; every rendered message is a non-empty string ending in `.`.
+- No surviving placeholder (AC-67): for every row rendered for every provider (the five advertised ids with their `keyEnv`, and fake with `keyEnv` null; 6 x 280 = 1 680 messages) no `<` or `>` character survives, so a deployer never sees `<KEY>` on the page, in `POST /selftest` or in recent problems; for every advertised provider and every row the rendered string equals the template with the placeholders substituted and nothing else changed (AC-24).
+- Text bounds (AC-25, FR-25): every rendered sentence is at most 180 characters (the longest shipped is 176), which with the `unknown/status` row at 167 characters plus the id is what caps a provider id at 12 characters (8.1, EC-56).
+
+Consumers of the entity: `llmError` (the only renderer), `providers/fake.ts` (`fail <kind>`), the 60-sentence snapshot, and readme-template-and-release, which renders the 13 rows in table order into the README troubleshooting glossary and never hand-writes a sentence (OS-4).
+
 ---
 
 ## Out of Scope
@@ -1124,7 +1301,7 @@ No database and nothing on disk at runtime: every entity below lives in process 
 - OS-1: The agent's tool loop, `FALLBACK_MESSAGE`, `HANDOFF_MESSAGE`, the `llm_error` / `llm_timeout` end policy and the `turn.timing` measurement. Reason: they belong to agent-core (blueprint decision "Agent core owns the tool loop"); this feature only guarantees the events and sentences the agent consumes.
 - OS-2: Rendering of the self-test result, the recent-problems list, the "in use" line and the additive `kind`, `provider` and `model` fields of `POST /selftest`. Reason: owned by status-page-test-chat-and-selftest; section 7.7 records the shape as a proposed blueprint amendment that spec must adopt so the sentences stay verbatim.
 - OS-3: Wiring `createLlmClient` into `src/main.ts`. Reason: lands with integration-drain-and-simulator; the wiring rule (`apiKey: config.llmApiKey ?? ''`, constructed even when not ready, skipped only for the empty id of the fallback config) is recorded in 7.7 so it cannot drift.
-- OS-4: The README troubleshooting glossary (one entry per kind and variant with `<provider>` and `<KEY>` placeholders) and the `error_kind` glossary. Reason: rendered by readme-template-and-release from the catalogue; this feature ships `LLM_ERROR_TEMPLATES` (the variant list as data), the `llmError` function that renders them and the snapshot that freezes them, so the glossary comes from the table rather than a duplicated list.
+- OS-4: The README troubleshooting glossary (one entry per kind and variant with `<provider>`, `<KEY>` and `<status>` placeholders; 13 rows in table order, the fake's bare-`fail` sentence excluded) and the `error_kind` glossary. Reason: rendered by readme-template-and-release from the entity of section 8.12; this feature ships `LLM_ERROR_TEMPLATES` (the closed variant list as data, primary key `(kind, variant)`), the `llmError` function that renders it, the coverage and placeholder invariants that test it and the snapshot that freezes it, so the glossary comes from the table rather than a duplicated list; whether the glossary is rendered per provider (60 exact sentences that match whole-sentence find-in-page) or as 13 placeholder rows is that feature's choice (Appendix B).
 - OS-5: Live network tests for Anthropic, Google, Mistral and Groq. Reason: gate resolution Q12; they ship wired and unit-tested with mocked keys, and a live row in `docs/acceptance.md` runs only if the owner supplies a key.
 - OS-6: A boot-time probe that records a rejected key before anyone presses the self-test. Reason: readiness is config-only with no network at boot (ADR 0001) and a probe per deploy spends the deployer's credits; it can be added later as an additive change in the integration feature if the owner wants it.
 - OS-7: Any retry inside a turn (one immediate retry on 429 or 5xx included). Reason: `maxRetries: 0` keeps `LLM_TIMEOUT_MS` true and an interruption cheap; a retry would add silent seconds before the fallback, and the agent's policy is one shot per step.
@@ -1140,80 +1317,98 @@ No database and nothing on disk at runtime: every entity below lives in process 
 - OS-17: Executing tools, validating tool input or running more than one step inside the SDK (`execute`, `stopWhen`, `toolChoice`). Reason: blueprint decision; the agent's zod check and re-prompt loop are the single validator and the tool runner.
 - OS-18: Any Railway account action, Twilio call or live deployment during the build. Reason: human constraint 6; the owner runs `docs/acceptance.md` section 2 and records what a real deploy showed.
 - OS-19: Editing `src/config`, `src/log`, `src/agent`, `src/status`, `src/voice`, `src/tools` or the arch test matrix. Reason: the feature map row names `llm` as the only module; the config text changes come from the catalogue through `pnpm docs:env`, not from a schema edit, so `test/config/__snapshots__/loadConfig.test.ts.snap` stays unchanged.
+- OS-20: Passing each vendor's default base URL explicitly to defeat the `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` reads inside `@ai-sdk/openai` and `@ai-sdk/anthropic` (EC-46). Reason: a vendor URL pinned in code goes stale with the SDK, a deployer who sets those variables did so deliberately, and `src/llm` still reads no environment itself (NFR-15); the README `## LLM providers` section documents the two variables instead (FR-46, AC-51), and a decision to pin them can land later as an additive `baseURL` default.
+- OS-21: A comprehension check of the catalogue sentences with real no-coders ("what would you do next?"). Reason: the personas behind the sentences are derived from `.claude/project/profile.md` alone (no deployer research exists); the check is owner logistics for the release stage, recorded in `docs/acceptance.md` by readme-template-and-release, and its outcome can only re-word a template row, which the snapshot and the README glossary then follow from the one source (section 8.12).
 
 ---
 
 ## Appendix A: Traceability (generated from the criteria titles)
 
-| Requirement | Acceptance criteria                                                  |
-| ----------- | -------------------------------------------------------------------- |
-| FR-1        | AC-1, AC-3                                                           |
-| FR-2        | AC-1                                                                 |
-| FR-3        | AC-2, AC-6                                                           |
-| FR-4        | AC-4, AC-50                                                          |
-| FR-5        | AC-5                                                                 |
-| FR-6        | AC-47                                                                |
-| FR-7        | AC-46                                                                |
-| FR-8        | AC-37, AC-46, AC-49                                                  |
-| FR-9        | AC-9, AC-19                                                          |
-| FR-10       | AC-6, AC-7, AC-58                                                    |
-| FR-11       | AC-6, AC-9                                                           |
-| FR-12       | AC-10, AC-11                                                         |
-| FR-13       | AC-19, AC-27                                                         |
-| FR-14       | AC-20, AC-61                                                         |
-| FR-15       | AC-10, AC-14                                                         |
-| FR-16       | AC-10, AC-12, AC-13, AC-14, AC-15, AC-16, AC-31, AC-34, AC-56, AC-60 |
-| FR-17       | AC-16, AC-17, AC-18, AC-19, AC-33, AC-35, AC-59                      |
-| FR-18       | AC-36                                                                |
-| FR-19       | AC-32, AC-37                                                         |
-| FR-20       | AC-28, AC-29, AC-30, AC-33, AC-34, AC-43, AC-59, AC-60               |
-| FR-21       | AC-29, AC-36                                                         |
-| FR-22       | AC-43, AC-46                                                         |
-| FR-23       | AC-24                                                                |
-| FR-24       | AC-21, AC-24, AC-31, AC-32, AC-33, AC-42, AC-60                      |
-| FR-25       | AC-25                                                                |
-| FR-26       | AC-7, AC-11, AC-21, AC-22, AC-23, AC-31                              |
-| FR-27       | AC-21, AC-23                                                         |
-| FR-28       | AC-22, AC-26                                                         |
-| FR-29       | AC-35                                                                |
-| FR-30       | AC-37                                                                |
-| FR-31       | AC-37, AC-38                                                         |
-| FR-32       | AC-19, AC-38                                                         |
-| FR-33       | AC-39, AC-42                                                         |
-| FR-34       | AC-39, AC-40, AC-41, AC-42, AC-43, AC-44                             |
-| FR-35       | AC-39, AC-45                                                         |
-| FR-36       | AC-40, AC-41                                                         |
-| FR-37       | AC-45                                                                |
-| FR-38       | AC-55                                                                |
-| FR-39       | AC-8                                                                 |
-| FR-40       | AC-8                                                                 |
-| FR-41       | AC-4, AC-50                                                          |
-| FR-42       | AC-4, AC-52                                                          |
-| FR-43       | AC-48, AC-49, AC-51                                                  |
-| FR-44       | AC-46                                                                |
-| FR-45       | AC-25, AC-46                                                         |
-| FR-46       | AC-51                                                                |
-| FR-47       | AC-52                                                                |
-| FR-48       | AC-53                                                                |
-| FR-49       | AC-54                                                                |
-| NFR-1       | AC-53                                                                |
-| NFR-2       | AC-35                                                                |
-| NFR-3       | AC-31, AC-60                                                         |
-| NFR-4       | AC-38                                                                |
-| NFR-5       | AC-18, AC-30, AC-59                                                  |
-| NFR-6       | AC-56                                                                |
-| NFR-7       | AC-2                                                                 |
-| NFR-8       | AC-12                                                                |
-| NFR-9       | AC-39                                                                |
-| NFR-10      | AC-52                                                                |
-| NFR-11      | AC-52                                                                |
-| NFR-12      | AC-57                                                                |
-| NFR-13      | AC-26, AC-27                                                         |
-| NFR-14      | AC-54                                                                |
-| NFR-15      | AC-58                                                                |
-| NFR-16      | AC-25                                                                |
-| NFR-17      | AC-24                                                                |
-| NFR-18      | AC-38                                                                |
-| NFR-19      | AC-48                                                                |
+| Requirement | Acceptance criteria                                                                |
+| ----------- | ---------------------------------------------------------------------------------- |
+| FR-1        | AC-1, AC-3                                                                         |
+| FR-2        | AC-1                                                                               |
+| FR-3        | AC-2, AC-6                                                                         |
+| FR-4        | AC-4, AC-50                                                                        |
+| FR-5        | AC-5                                                                               |
+| FR-6        | AC-47                                                                              |
+| FR-7        | AC-46                                                                              |
+| FR-8        | AC-37, AC-46, AC-49                                                                |
+| FR-9        | AC-9, AC-19                                                                        |
+| FR-10       | AC-6, AC-7, AC-58                                                                  |
+| FR-11       | AC-6, AC-9                                                                         |
+| FR-12       | AC-10, AC-11, AC-62                                                                |
+| FR-13       | AC-11, AC-19, AC-27, AC-62                                                         |
+| FR-14       | AC-20, AC-61                                                                       |
+| FR-15       | AC-10, AC-14, AC-49, AC-69                                                         |
+| FR-16       | AC-10, AC-12, AC-13, AC-14, AC-15, AC-16, AC-31, AC-34, AC-56, AC-60, AC-64        |
+| FR-17       | AC-10, AC-16, AC-17, AC-18, AC-19, AC-33, AC-35, AC-59, AC-63, AC-64               |
+| FR-18       | AC-36                                                                              |
+| FR-19       | AC-32, AC-37                                                                       |
+| FR-20       | AC-13, AC-17, AC-18, AC-28, AC-29, AC-30, AC-33, AC-34, AC-43, AC-59, AC-60, AC-63 |
+| FR-21       | AC-29, AC-36, AC-63                                                                |
+| FR-22       | AC-43, AC-46, AC-70                                                                |
+| FR-23       | AC-24, AC-42, AC-65                                                                |
+| FR-24       | AC-21, AC-24, AC-31, AC-32, AC-33, AC-42, AC-60, AC-65, AC-66                      |
+| FR-25       | AC-25, AC-67                                                                       |
+| FR-26       | AC-7, AC-11, AC-21, AC-22, AC-23, AC-31, AC-68                                     |
+| FR-27       | AC-21, AC-23, AC-68                                                                |
+| FR-28       | AC-22, AC-26                                                                       |
+| FR-29       | AC-35                                                                              |
+| FR-30       | AC-37                                                                              |
+| FR-31       | AC-37, AC-38, AC-64                                                                |
+| FR-32       | AC-19, AC-38                                                                       |
+| FR-33       | AC-39, AC-42                                                                       |
+| FR-34       | AC-39, AC-40, AC-41, AC-42, AC-43, AC-44, AC-70                                    |
+| FR-35       | AC-39, AC-45, AC-70                                                                |
+| FR-36       | AC-40, AC-41                                                                       |
+| FR-37       | AC-45, AC-70                                                                       |
+| FR-38       | AC-55                                                                              |
+| FR-39       | AC-8                                                                               |
+| FR-40       | AC-8                                                                               |
+| FR-41       | AC-4, AC-50                                                                        |
+| FR-42       | AC-4, AC-52                                                                        |
+| FR-43       | AC-48, AC-49, AC-51, AC-69                                                         |
+| FR-44       | AC-46                                                                              |
+| FR-45       | AC-25, AC-46                                                                       |
+| FR-46       | AC-51                                                                              |
+| FR-47       | AC-52                                                                              |
+| FR-48       | AC-53                                                                              |
+| FR-49       | AC-54, AC-71                                                                       |
+| NFR-1       | AC-53                                                                              |
+| NFR-2       | AC-35                                                                              |
+| NFR-3       | AC-31, AC-60                                                                       |
+| NFR-4       | AC-38                                                                              |
+| NFR-5       | AC-17, AC-18, AC-30, AC-45, AC-59, AC-63                                           |
+| NFR-6       | AC-56                                                                              |
+| NFR-7       | AC-2                                                                               |
+| NFR-8       | AC-12                                                                              |
+| NFR-9       | AC-39                                                                              |
+| NFR-10      | AC-52                                                                              |
+| NFR-11      | AC-52                                                                              |
+| NFR-12      | AC-57                                                                              |
+| NFR-13      | AC-26, AC-27                                                                       |
+| NFR-14      | AC-54                                                                              |
+| NFR-15      | AC-58                                                                              |
+| NFR-16      | AC-25, AC-67                                                                       |
+| NFR-17      | AC-24, AC-65, AC-66, AC-67                                                         |
+| NFR-18      | AC-38                                                                              |
+| NFR-19      | AC-48, AC-54, AC-71                                                                |
 
-Every FR and NFR appears above; every AC names at least one requirement; every EC names the FR it exercises. Counts: 49 FR, 19 NFR, 61 AC, 43 EC, 19 OS.
+Every FR and NFR appears above; every AC names at least one requirement; every EC names the FR it exercises. Counts: 49 FR, 19 NFR, 71 AC, 56 EC, 21 OS.
+
+---
+
+## Appendix B: Open questions handed to other features (recorded, not decided here)
+
+Each item names its owner; none blocks this feature, and none changes a sentence, a kind or a seam shape.
+
+- B-1 (status-page-test-chat-and-selftest): Self-test while Not ready. A client built with `apiKey ''` answers the `auth/key` sentence (`rejected the API key in OPENAI_API_KEY`), which reads wrong when the key is merely missing. Skip the probe and show the blocking `OPENAI_API_KEY: is not set.` problem whenever a blocking problem names the provider's `keyEnv`, or hide the self-test button while Not ready; section 7.7 records only that the client is constructed.
+- B-2 (status-page-test-chat-and-selftest): Whether a failed `POST /selftest` is also recorded into recent problems so the page remembers it after a refresh; today only agent-core records `llm_error` entries.
+- B-3 (status-page-test-chat-and-selftest): The proposed `SelfTestResponse.llm` amendment (`error` = `LlmError.message` verbatim plus additive `kind`, `provider`, `model`) conflicts with the blueprint text "plain English from LlmError.kind"; until adopted, NFR-17 does not span the JSON. Needs a recorded decision in the status spec.
+- B-4 (status-page-test-chat-and-selftest): Print the 10 second self-test limit next to the in-use line when `LLM_TIMEOUT_MS` exceeds 10000 (EC-40), and show the kind word and the sentence inline on a failed test-chat turn instead of only in recent problems; wrap variable names in `<code>` for screen-reader grouping.
+- B-5 (readme-template-and-release): Render the glossary per advertised provider (60 exact sentences, whole-sentence find-in-page matches) or keep 13 placeholder rows with an instruction to search a distinctive fragment such as `did not start answering`; and whether to mark the `timeout/gap` row as reachable only when `stallMs` differs from `timeoutMs`.
+- B-6 (owner): The `rate_limit` sentence points at "plan and billing" for every 402, 429 and 498 although a transient per-minute 429 needs only a retry; the locked `LlmError` cannot carry the vendor's code token (OS-8). Keep one sentence, or accept a future additive kind split when the seam is next revised.
+- B-7 (agent-core): Log `aborted` at debug with the turn number so the owner can correlate interrupts with `turn.timing` `interrupted=true` during the live check; this feature only fixes that `aborted` is never logged above debug (FR-29).
+- B-8 (owner, release stage): The five-person comprehension check of the catalogue sentences (OS-21) and a screen-reader pronunciation check of names such as `LLM_TIMEOUT_MS` and `GOOGLE_GENERATIVE_AI_API_KEY`; verbatim names are required, so the mitigation is `<code>` wrapping on the page, not rewording.
+- B-9 (implementer, human constraint 2): Re-verify the AI SDK current major, the exact API shapes recorded in section 7.9 and the OpenAI default model (`gpt-5.6-terra` with `reasoningEffort 'none'`) against the published docs immediately before writing `src/llm/aiSdkClient.ts`; this spec's 2026-09-09 record is an input to that check, not a substitute; the only UX dependency is that the "default model of this build" sentence never names the model.
