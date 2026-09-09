@@ -5,3 +5,15 @@ The promise to contributors is "add a provider, tool or adapter as one file plus
 ## Considered options
 
 Agent-owned hexagonal ports were rejected because a contributor would touch two folders. Directory-scan discovery was rejected because it fails at runtime instead of at typecheck. Reversing this decision later means moving every seam, which is why it is recorded.
+
+## Refinements at the contract lock (2026-09-09)
+
+Settled when the seam files were written, so that no feature has to edit a locked type:
+
+- Cross-seam references (`ToolContext.call: CallInfo`, `ToolResult.end.reasonCode`, `VoiceOut.end(data: HandoffData)`) are type-only imports of another seam's `types.ts`. The architecture test allows `import type` of any `src/<module>/types.ts` from every module except `src/llm`, which imports nothing internal; value imports follow the per-module matrix unchanged.
+- `AgentSettings` and `ToolSettings` are declared structurally in the seam files rather than as `Pick<AppConfig, ...>`, because config is built after the lock. Config's `AppConfig` must satisfy them.
+- The `RecentProblems` interface lives in `src/agent/types.ts` because agent and voice both record into it and neither may import status; the ring-buffer instance is still owned by status and created in `src/main.ts`.
+- `LlmProviderModule` carries `advertised: boolean` (false hides a provider from the README, the status page and the "valid values" message while `LLM_PROVIDER` still accepts it), a one-line `description`, and `keyEnv: string | null` (null for the key-less fake provider).
+- `RelaySocket`, the slice of a `ws` WebSocket the ConversationRelay link uses, is declared in `src/voice/types.ts` so the test double has a shape to implement.
+- `src/security/types.ts` declares only the upgrade gate (`UpgradeGate`, `UpgradeDecision`, the rejection reasons that match `ws.rejected`) and `SignatureVerdict`; the functions arrive with foundation:security-primitives.
+- Config owns every default, including the bundled complaints-line `SYSTEM_PROMPT` (`src/config/defaults.ts`), because `src/agent` may import config types only, never values. The agent receives the prompt through `AgentSettings.SYSTEM_PROMPT`, always as a string, so `src/agent/prompt.ts` (if the agent core keeps one) builds the system message from settings rather than holding the default. `loadConfig(env, catalogs)` takes the registry catalogs as an argument; `src/main.ts` and `scripts/docs-env.ts` pass `{ llm: llmCatalog, automation: presets }`, so `src/config` stays a pure function of the registries and a test can add a provider or a preset without touching a registry file.

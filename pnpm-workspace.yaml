@@ -1,0 +1,4 @@
+# pnpm 11 reads its settings from this file (not .npmrc). Single-package repo; no packages list needed.
+# Dependencies whose install scripts may run. pnpm 11 refuses build scripts that are not listed here.
+allowBuilds:
+  esbuild: true
