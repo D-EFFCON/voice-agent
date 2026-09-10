@@ -6,3 +6,4 @@ coverage/
 .env.*
 !.env.example
 .claude/workflows/
+.claude/project/
