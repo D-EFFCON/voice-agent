@@ -1,13 +1,11 @@
-import { stubClient } from '../stub.js';
-import type { LlmProviderModule } from '../types.js';
+import { defineSdkProvider } from '../aiSdkClient.js';
 
-export const anthropic: LlmProviderModule = {
+/** Wired and unit tested; a live call on this provider is the deployer's own smoke test. */
+export const anthropic = defineSdkProvider({
   id: 'anthropic',
-  advertised: true,
+  sdk: 'anthropic',
   description: 'Claude models through the Anthropic API.',
   keyEnv: 'ANTHROPIC_API_KEY',
   keyDescription: 'API key for Anthropic. Create one at console.anthropic.com under API keys.',
-  // The fast Claude model, chosen for first-token latency. Set LLM_MODEL to use a larger one.
-  defaultModel: 'claude-haiku-4-5',
-  create: ({ model }) => stubClient('anthropic', model),
-};
+  defaultModel: 'claude-haiku-4-5-20251001',
+});

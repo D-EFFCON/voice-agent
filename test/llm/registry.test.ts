@@ -93,22 +93,28 @@ describe('llm registry', () => {
     expect(() => createLlmClient({ provider: 'nope', apiKey: 'k' })).not.toThrow(/fake/);
   });
 
-  it('stub clients honour the LlmClient contract: one error event, probe not ok, never throws', async () => {
-    const secret = 'sk-test-secret-0123456789';
-    for (const p of providers) {
-      const client = createLlmClient({ provider: p.id, apiKey: secret });
-      const events = await drain(client);
-      expect(events).toHaveLength(1);
-      const [only] = events;
-      expect(only?.type).toBe('error');
-      if (only?.type === 'error') {
-        expect(only.error.kind).toBe('unknown');
-        expect(only.error.message).toContain(p.id);
-        expect(only.error.message).not.toContain(secret);
-      }
-      const probe = await client.probe();
-      expect(probe.ok).toBe(false);
-      expect(probe.error?.kind).toBe('unknown');
+  it('the scripted provider honours the LlmClient contract with no key and no network', async () => {
+    const client = createLlmClient({ provider: 'fake', apiKey: '' });
+    const events = await drain(client);
+
+    // Streamed, not buffered: more than one delta, and exactly one terminal, at the end.
+    expect(events.filter((e) => e.type === 'text-delta').length).toBeGreaterThan(1);
+    expect(events.filter((e) => e.type === 'finish' || e.type === 'error')).toHaveLength(1);
+    expect(events.at(-1)?.type).toBe('finish');
+
+    await expect(client.probe()).resolves.toMatchObject({ ok: true });
+  });
+
+  it('every advertised provider builds a client without touching the network', () => {
+    // stream() and probe() are deliberately not called here: for a real provider they would make
+    // an HTTP request. The event mapping, timeouts and failure sentences are covered against a
+    // mock model in test/llm/aiSdkClient.test.ts, which needs no key.
+    for (const p of providers.filter((provider) => provider.advertised)) {
+      const client = createLlmClient({ provider: p.id, apiKey: 'sk-not-a-real-key' });
+      expect(client.provider).toBe(p.id);
+      expect(client.model).toBe(p.defaultModel);
+      expect(typeof client.stream).toBe('function');
+      expect(typeof client.probe).toBe('function');
     }
   });
 });

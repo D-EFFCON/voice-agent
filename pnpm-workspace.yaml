@@ -2,3 +2,13 @@
 # Dependencies whose install scripts may run. pnpm 11 refuses build scripts that are not listed here.
 allowBuilds:
   esbuild: true
+minimumReleaseAgeExclude:
+  - '@ai-sdk/anthropic@4.0.52'
+  - '@ai-sdk/gateway@4.0.78'
+  - '@ai-sdk/google@4.0.67'
+  - '@ai-sdk/groq@4.0.40'
+  - '@ai-sdk/mistral@4.0.42'
+  - '@ai-sdk/openai@4.0.65'
+  - '@ai-sdk/provider-utils@5.0.39'
+  - '@ai-sdk/provider@4.0.13'
+  - ai@7.0.97

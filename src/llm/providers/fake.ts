@@ -1,10 +1,10 @@
-import { stubClient } from '../stub.js';
+import { scriptedClient } from '../scripted.js';
 import type { LlmProviderModule } from '../types.js';
 
 /**
- * Scripted provider for CI and the simulator: no key, no network. Accepted by
- * LLM_PROVIDER=fake but never advertised. llm-providers fills in the script (mentions of
- * 'human' or 'person' call the handoff tool, 'slow' stalls, 'fail' errors).
+ * Scripted provider for CI, the simulator and a first smoke test: no key, no network. Accepted by
+ * LLM_PROVIDER=fake but never advertised, so it cannot become a deployment's default by accident.
+ * The script lives in src/llm/scripted.ts and keys off what the caller says.
  */
 export const fake: LlmProviderModule = {
   id: 'fake',
@@ -13,5 +13,5 @@ export const fake: LlmProviderModule = {
   keyEnv: null,
   keyDescription: 'No key needed.',
   defaultModel: 'scripted',
-  create: ({ model }) => stubClient('fake', model),
+  create: ({ model }) => scriptedClient({ model }),
 };
