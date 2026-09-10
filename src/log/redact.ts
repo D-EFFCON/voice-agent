@@ -6,7 +6,9 @@
  * is '[redacted]', at any depth. The logger runs it over the fields of every call and over
  * serialized errors. A name ending in a credential word counts, so `key` and `token` on their own
  * are censored while tokens_out, merged_keys and AUTOMATION_WEBHOOK_KEY_HEADER are not; log a
- * variable's name under `variable` or `keyEnv`, never under `key`.
+ * variable's name under `variable` or `keyEnv`, never under `key`. A number or a boolean is left
+ * alone whatever its name, because a credential is never one and blanking a measurement costs a
+ * deployer the diagnosis it was there to give.
  *
  * By value: a SecretScrubber replaces every registered secret value inside the finished JSON line,
  * so a secret reaches stdout as '[redacted]' wherever it was: the message, a nested field, an
@@ -53,6 +55,18 @@ export function isSecretKey(name: string, extra?: ReadonlySet<string>): boolean 
   );
 }
 
+/**
+ * A credential is text. A number, a boolean or a null under a credential-shaped name is a
+ * measurement, and censoring it costs real diagnosis: the turn timing the seam calls
+ * `ms_prompt_to_llm_first_token` ends in a credential word, and censoring it would blank the one
+ * latency number a deployer is told to read from the Railway logs. Anything that is not plainly a
+ * scalar is still censored whole, because an object under such a name may hold a credential
+ * somewhere inside it.
+ */
+function couldHoldASecret(value: unknown): boolean {
+  return !(typeof value === 'number' || typeof value === 'boolean' || value === null);
+}
+
 /** Past this depth values pass through unchanged; the value scrubber still covers them. */
 const MAX_DEPTH = 8;
 
@@ -78,7 +92,7 @@ function copy(
   for (const key of Object.keys(obj)) {
     const value = obj[key];
     if (value === undefined) continue;
-    if (isSecretKey(key, extra)) out[key] = value === null ? null : REDACTED;
+    if (isSecretKey(key, extra) && couldHoldASecret(value)) out[key] = REDACTED;
     else out[key] = walk(value, depth + 1, extra);
   }
   return out;
