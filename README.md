@@ -2,44 +2,204 @@
 
 Setting up voice agents as simple as one two three.
 
-One Node.js service that sits between Twilio's voice products, the LLM you choose and the automation tool you already use (Make, Zapier or n8n). Deploys from GitHub to Railway. No database.
+This is the missing piece between a phone number and an AI. Twilio answers the call, this server does the thinking, and your automation tool gets told when a human is needed. You host it yourself on Railway, you pick the AI, and you own the whole thing. There is no per-minute fee to anyone but Twilio and your AI provider.
 
-**Status: app shell.** The server boots on any environment, checks every variable at start-up, serves the status page at `/` (readiness and the problem list) and `GET /health`, and answers the Twilio WebSocket path through the upgrade gate. It cannot take calls yet: the ConversationRelay adapter, the agent core, the LLM providers and the unlocked status page land in the next build stages.
+You do not need to be a developer. You need to be comfortable pasting keys into a form and clicking around Twilio. You will never have to read this code.
 
-## Run it locally
+**What works today:** a caller rings your number, the AI answers and talks with them, and when they ask for a person the call is handed to a human and your automation tool is told why. **Not built yet:** the one-click deploy button, the browser test chat, and a ready-made Twilio flow you can import. Those are listed at the bottom.
 
-You need Node.js 24 and pnpm 11 (see https://pnpm.io/installation).
+---
+
+## Before you start
+
+Four accounts. Get these open in tabs before you begin.
+
+1. **Twilio**, with a phone number you own. Upgrade from trial before you go live: a trial account plays its own message before your greeting, and the handoff dials out, so the human's number would have to be verified first.
+2. **An AI provider.** OpenAI is the default and the one that is tested. Anthropic, Google, Mistral and Groq also work.
+3. **Railway**, where this server will live. The cheapest tier is enough.
+4. **GitHub**, to hold your copy of this code.
+
+**One Twilio setting first, or nothing will work.** In the Twilio Console go to **Voice**, then **Settings**, then **Privacy & Security**. Find the line about the predictive and generative AI/ML features addendum, accept it, and save. Twilio will not let ConversationRelay run until you do.
+
+Set aside about thirty minutes.
+
+---
+
+## 1. Get your own copy
+
+Click **Fork** at the top of this repository. That gives you your own copy on GitHub that Railway can deploy from. Nothing else to do here.
+
+## 2. Put it on Railway
+
+In Railway, click **New Project**, then **Deploy from GitHub repo**, and pick the copy you just forked. Railway works out how to build it on its own. There is nothing to configure about the build.
+
+The first deploy will finish but the server will say it is not ready. That is expected. It has no settings yet.
+
+While you are here, give the service a public address: open **Settings**, then **Networking**, and click **Generate Domain**. Copy the domain it gives you. It looks like `something.up.railway.app`.
+
+## 3. Fill in the settings
+
+In Railway open the **Variables** tab and add these four.
+
+| Variable | What to put in it |
+| --- | --- |
+| `WS_SECRET` | A long random string, at least 24 letters and numbers. Make one up or use a password generator. This is what stops strangers connecting to your server. |
+| `TWILIO_AUTH_TOKEN` | From the Twilio Console front page, the Account Info panel. |
+| `OPENAI_API_KEY` | From platform.openai.com, under API keys. |
+| `STATUS_TOKEN` | Another long random string, at least 16 characters. This is the password for your own status page. |
+
+Railway redeploys itself when you save. Wait for it to finish.
+
+**Want to try it before spending anything on AI?** Set `LLM_PROVIDER` to `fake` and skip the OpenAI key. You get a scripted agent that talks back, hands over when you ask for a person, and costs nothing. Everything else in this guide works the same. Change it to `openai` when you are ready for the real thing.
+
+## 4. Check it is ready
+
+Open your Railway domain in a browser, like `https://something.up.railway.app`.
+
+You should see **Ready**. If you see **Not ready**, the page lists exactly what is wrong and what to do about it, one line per problem. Fix those in the Variables tab and reload. The page never shows your keys.
+
+Now write down your **WebSocket URL**. Take your Railway domain, put `wss://` in front, then `/twilio/conversationrelay/` and your `WS_SECRET` on the end:
+
+```
+wss://something.up.railway.app/twilio/conversationrelay/YOUR_WS_SECRET
+```
+
+Use your real domain and your real secret. Keep this URL private. Anyone who has it can talk to your agent.
+
+## 5. Build the Twilio flow
+
+This is the part that connects your phone number to the server. In the Twilio Console go to **Studio**, then **Create new Flow**, name it something like `voice-agent`, and choose **Start from scratch**.
+
+Drag in three widgets and connect them like this.
+
+**a. The AI stage.** Drag in a **Conversation Relay** widget. Connect **Incoming Call** to it. Then set:
+
+- **WebSocket URL**: the URL you wrote down in step 4.
+- **Welcome Greeting**: what the caller hears first, before the AI says anything. Something like `Hi, you've reached Example Company. How can I help?`
+- Leave everything else alone for now. Language, voice and speech settings all have sensible defaults, and you can come back to them.
+
+Note the widget's name. It will be something like `run_crelay_1`. You need it in the next step.
+
+**b. The decision.** Drag in a **Split Based On...** widget. Connect the Conversation Relay widget's **Success** transition to it. Set:
+
+- **Variable to Test**: `{{widgets.run_crelay_1.HandoffData}}`, using your widget's actual name.
+- Add one condition: **Contains** the value `live-agent-handoff`.
+
+**c. The human.** Drag in a **Connect Call To** widget and set it to the phone number a person will answer. Connect two things to it:
+
+- The **Contains live-agent-handoff** branch of your Split widget.
+- The **Failed** transition of the Conversation Relay widget. This matters. If your server is ever down or misconfigured, the caller reaches a person instead of dead air.
+
+The Split widget's **No Match** branch can go to a **Hangup** widget. That is a call the AI finished normally.
+
+Click **Publish**.
+
+## 6. Point your number at it and call
+
+In the Twilio Console open **Phone Numbers**, then your number. Under **Voice Configuration**, set **A call comes in** to **Studio Flow**, and pick the flow you just published. Save.
+
+Now ring your own number. You should hear your greeting, then be able to talk to the agent.
+
+Say **"I'd like to speak to a person."** The agent should say it is putting you through, and the phone you set in step 5c should ring.
+
+That is a working voice agent.
+
+---
+
+## Telling your automation tool about handoffs
+
+Right now a handoff transfers the caller but nobody gets a notification. To send each handoff to Make, Zapier or n8n, add two more variables in Railway:
+
+| Variable | What to put in it |
+| --- | --- |
+| `AUTOMATION_PROVIDER` | `make`, `zapier` or `n8n` |
+| `AUTOMATION_WEBHOOK_URL` | The webhook URL from that tool. It must start with `https://`. |
+
+Add `AUTOMATION_WEBHOOK_KEY` too if your webhook expects a key. The server sends it in the header your tool expects, so you do not have to work that out.
+
+Every handoff then posts JSON with the caller's number, why they want a person, and a summary of what they said.
+
+**Make and n8n can answer back.** If your scenario replies within five seconds with JSON, three fields are read and carried into the handoff data Twilio receives: `transfer_to`, `ticket_id` and `note`. Everything else in your reply is ignored, on purpose, so a mistake in your scenario cannot break the call.
+
+Those three arrive in Twilio, but the flow in step 5 does not use them yet: it always dials the fixed number in the Connect Call To widget. Routing the call to `transfer_to` needs another Studio step to pull the value out, which this guide does not cover yet. `ticket_id` and `note` are useful today for whatever your scenario does with them.
+
+**Zapier only acknowledges.** Catch Hook cannot reply in time, so nothing comes back and the transfer uses the number in your Studio flow.
+
+If your webhook is slow, broken or switched off, **the caller still gets transferred**. The handoff never depends on it.
+
+---
+
+## Changing how the agent behaves
+
+**What it says and how it acts** is one variable: `SYSTEM_PROMPT`. It ships with a complaints-line prompt for a made-up company, so you will want to change it. Write it as instructions to a person answering your phone. Keep it short, tell it to keep replies to a sentence or two, and tell it when to hand over.
+
+**Which AI it uses** is `LLM_PROVIDER` plus that provider's key. The default is `openai` with the `gpt-4o-mini` model, chosen because it starts talking fastest. Newer models think before they answer, which on a phone call sounds like a dead line. Set `LLM_MODEL` if you want a different one.
+
+**The spoken lines** for handing over, apologising and closing a long call are `HANDOFF_MESSAGE`, `FALLBACK_MESSAGE` and `CLOSING_MESSAGE`.
+
+Every setting is in the table at the bottom of this page.
+
+---
+
+## When something is wrong
+
+**Start at your status page.** Every problem it can see is listed there in plain English with what to do about it. These are the real messages:
+
+- `OPENAI_API_KEY: is not set. API key for OpenAI. Create one at platform.openai.com under API keys.`
+- `LLM_PROVIDER: is not one of openai, anthropic, google, mistral, groq. Set it to one of those values.`
+- `AUTOMATION_WEBHOOK_URL: is not an https URL. Paste the full webhook URL from your automation tool; it must start with https://.`
+
+**The call connects but the agent never speaks.** Your AI key is probably wrong or out of credit. The caller hears the fallback line and goes to a person, which is deliberate. Check your Railway logs for `llm.error`.
+
+**The call fails immediately and goes straight to a person.** Twilio could not connect. Almost always the WebSocket URL. Check it starts with `wss://`, that the domain matches Railway exactly, and that the secret on the end matches `WS_SECRET` character for character.
+
+**Twilio says the connection was refused.** In the Railway logs look for `ws.rejected`. The `reason` tells you which check failed: `path` means the secret in the URL is wrong, `signature` means `TWILIO_AUTH_TOKEN` does not match your account, `not_ready` means fix the problems on the status page first, and `capacity` means all your call slots are busy.
+
+**Reading the logs.** Railway's log view accepts a filter. `@event:call.ended` shows one line per finished call with an `outcome`: `handoff` means a person took over, `completed` means the AI finished normally, `caller_hangup` means they hung up, and `error` or `timeout` mean something went wrong. `@event:turn.timing` shows how fast each reply was.
+
+Still stuck? Open an issue on GitHub and paste what your status page says. Do not paste your keys.
+
+---
+
+## Privacy and recording
+
+This server stores nothing. A conversation lives in memory during the call and is gone when it ends. Nothing is sent anywhere except the AI provider you chose and the webhook you configured.
+
+**Recording calls and telling callers about it is your responsibility, not this template's.** The rules differ by country and by state, and in many places you must tell the caller before recording. This template records nothing by default and takes no position on your local law. If you turn on Twilio's call recording, or if your automation stores what callers say, find out what your jurisdiction requires and put it in your greeting.
+
+`HANDOFF_INCLUDE_TRANSCRIPT` is off by default. Turning it on sends what the caller said to your automation tool.
+
+---
+
+## Not built yet
+
+Being straight with you about what is missing:
+
+- **A one-click deploy button.** Step 2 is manual until the Railway template is published.
+- **The unlocked status page.** It shows readiness and problems today. Showing the WebSocket URL, a browser test chat and a self-test button is next, which is why step 4 has you build the URL by hand.
+- **A Studio flow you can import.** Step 5 is manual for now.
+- **A Media Streams adapter** and TwiML endpoints, for people who do not want to use Studio.
+
+---
+
+## For developers
+
+You need Node.js 24 and pnpm 11 (https://pnpm.io/installation). Never npm.
 
 ```sh
 pnpm install
 pnpm dev
 ```
 
-Then open http://localhost:3000/health. Without any variables set the server reports `ready: false` and lists what is missing; copy `.env.example` to `.env`, fill it in and start with `node --env-file=.env dist/main.js` after `pnpm build` (or set the variables in your shell before `pnpm dev`).
+`pnpm lint`, `pnpm typecheck`, `pnpm build` and `pnpm test` are what CI runs, in that order. Build before you test: the integration suite boots the built server from `dist/` and drives a real call over a real WebSocket. `pnpm docs:env` regenerates `.env.example` and the table below from the environment schema, and CI fails when they drift.
 
-`pnpm lint`, `pnpm typecheck`, `pnpm build` and `pnpm test` are what CI runs, in that order: the test suite boots the built server from `dist/`, so build before you test. `pnpm docs:env` regenerates `.env.example` and the tables below from the environment schema; CI fails when they drift.
+**Layout.** Each seam owns its types next to a registry, and adding a provider, tool or voice adapter is one file plus one line: `src/llm/` (providers), `src/tools/` (the handoff tool and the automation presets), `src/voice/` (adapters), with `src/agent/` as the domain core that imports only seam types. `src/main.ts` is the only file that wires concrete things together. `test/arch/imports.test.ts` fails if a module reaches outside its row of the allowed matrix. The decisions behind that are in `docs/adr/`.
 
-## What the server answers
+**The call path.** A WebSocket upgrade passes one gate in a fixed order (path secret, readiness, Twilio signature, capacity), then `src/voice/conversationrelay/` translates Twilio's frames onto the agent's session API. The agent core runs the turn, streams words back as they arrive, and ends the call through one policy table in `src/agent/endPolicy.ts`. Anything that goes wrong on the server routes to `live-agent-handoff`, so a caller reaches a person rather than silence; only a long call, a quiet caller and the agent's own goodbye hang up.
 
-- `GET /` is the status page. Without the unlock cookie it shows Ready or Not ready, every problem as `VARIABLE: what is wrong. What to do.` (blocking first, then warnings, never a value) and the hint `Open this page with ?token=<STATUS_TOKEN> (find it in your Railway variables) to see the Twilio URL, the self-test and the test chat.` Opening `/?token=<STATUS_TOKEN>` once sets the cookie and redirects to `/`; a wrong token shows `Token did not match.` The page is plain HTML with no script, so it reads the same with JavaScript off.
-- `GET /health` is always 200 JSON: `ready`, `uptime_s`, `commit`, `active_calls` and the same `problems` list. It carries no value and no URL.
-- `GET /twilio/conversationrelay/<WS_SECRET>` is the WebSocket path Twilio connects to. Every upgrade passes the gate in a fixed order: wrong secret 404 with an empty body, a blocking problem 503, a missing or wrong Twilio signature 403, every call slot in use 503. In this build an upgrade that passes the gate is still refused with 503 and `This build has no call adapter, so it cannot take calls yet.` Each refusal is one `ws.rejected` log line with the reason, the URL the server signed and the address, and an entry in the recent-problems buffer the unlocked status page will show.
-- Anything else is `404 {"error":"Not found."}`, never echoing the path. A server fault is `500 {"error":"Something went wrong on the server. Search the deploy log for the error id.","error_id":"..."}`; the `request.error` log line with that id has the details, and no body ever carries a stack trace or a value. A body over 64 KB gets 413. More than 60 requests a minute from one address get `429 {"error":"Too many requests. The limit is 60 per minute per address."}`.
-- On SIGTERM or SIGINT (a Railway redeploy, Ctrl+C) the server logs `server.draining`, refuses new upgrades, asks every call to end, waits up to 8 seconds, logs `server.stopped` and exits 0.
+**Logs** are one JSON object per line on stdout with an `event` name from `src/log/events.ts`. Secrets are redacted twice, by field name and by value. What callers and the model say is logged only at `LOG_LEVEL=debug`.
 
-## Configuration
-
-Every variable is declared once in `src/config/schema.ts` and read at start-up by `loadConfig`, which never throws: an invalid value falls back to its default and becomes a problem. Each problem is one line, `VARIABLE: what is wrong. What to do.`, and never contains a value. A **blocking** problem (a missing secret, an unknown provider, a bad webhook URL) keeps the server in `ready: false`, so it refuses calls but still answers `/` and `/health` and explains itself. A **warning** (no `STATUS_TOKEN`, `AUTOMATION_PROVIDER` unset, a number out of range) is shown but calls still run.
-
-The valid values of `LLM_PROVIDER` and `AUTOMATION_PROVIDER`, and the `*_API_KEY` variables, come from the registries: after adding a provider or a preset, run `pnpm docs:env` and the tables below update themselves.
-
-## Layout
-
-`src/app.ts` is the app shell: `buildApp(deps)` creates the Fastify instance with the plugins, the limits, the error handler, `/health`, the locked status page and the voice adapters, and returns it with a `drain()`; `src/main.ts` is the only file that wires the concrete registries, the gate and the unlock into it. Each seam owns its types next to a static registry: `src/llm/types.ts` + `registry.ts` (providers, one file each under `providers/`), `src/tools/types.ts` + `registry.ts` (tools and the automation presets), `src/voice/types.ts` + `index.ts` (adapters). `src/agent/types.ts` holds the session API and the HandoffData contract; `src/security/types.ts` the upgrade gate. Adding a provider, tool or adapter is one file plus one registry line, and `test/arch/imports.test.ts` fails when a module imports something outside its row of the allowed matrix. Test doubles for the seams live in `test/helpers/`.
-
-Logging goes through `src/log/`: every line is one JSON object on stdout with `level`, `time`, `msg` and an `event` name from `src/log/events.ts`, so a Railway log filter like `@event:call.ended` finds it. Secrets are redacted twice, by field name (`authorization`, `cookie`, every `*_SECRET`, `*_TOKEN` and `*_API_KEY` variable) and by value (every secret in the environment is replaced with `[redacted]` wherever it appears). Per-request logging is off, so nothing from a URL reaches the logs; what callers and the model say is logged only at `LOG_LEVEL=debug`.
-
-Security lives in `src/security/`. `safeEqual` compares every secret in constant time. The Twilio signature check is hand-rolled HMAC-SHA1, tried over the wss and https forms of the connection URL with and without `:443`, and reports which form matched, so a mismatch can be read off the status page instead of a packet capture. Every WebSocket connection passes one gate in a fixed order (path secret, readiness, Twilio signature, capacity); each refusal is a plain sentence with no value in it, and `TWILIO_SIGNATURE_MODE=warn` lets an unsigned connection through while saying so on the page, never by default. The status page unlocks once: `/?token=<STATUS_TOKEN>` sets an HttpOnly, SameSite=Strict cookie and redirects to `/`, so the token never stays in a URL. Every response carries `Cache-Control: no-store`, a Content Security Policy with a per-request nonce, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff`. Requests are limited to 60 per minute per address on HTTP routes and 300 per minute per address on the WebSocket upgrade route, keyed by the address the Railway proxy saw, so a forged `X-Forwarded-For` header buys nothing.
+---
 
 ## Environment variables
 
@@ -110,11 +270,3 @@ Security lives in `src/security/`. `safeEqual` compares every secret in constant
 | `RAILWAY_PUBLIC_DOMAIN` | set by Railway |  | Set by Railway when you generate a domain for the service. Used as the public host when PUBLIC_HOST is unset. |
 | `RAILWAY_GIT_COMMIT_SHA` | set by Railway |  | Set by Railway to the deployed commit. Shown as the build on the status page and in the logs. |
 <!-- env:end -->
-
-## Deploy
-
-Railway builds this repository natively, with no Dockerfile: Node from `engines.node`, pnpm from `packageManager`, then `pnpm build` and `pnpm start`. The Railway template tracks the `release` branch, never `main`. If you must override the Node version on Railway, set `RAILPACK_NODE_VERSION`.
-
-## Licence
-
-MIT. See `LICENSE`.
