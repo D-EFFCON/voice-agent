@@ -36,6 +36,12 @@ describe('generated environment docs', () => {
     expect(replaceBetween(readme, renderReadmeSection(list))).toBe(readme);
   });
 
+  /**
+   * Only the generated block. The prose above it is a deployer's guide and names variables in the
+   * order somebody setting one up meets them, which is not schema order and must not be.
+   */
+  const generated = readme.slice(readme.indexOf(README_ENV_START), readme.indexOf(README_ENV_END));
+
   it('every documented variable appears in both files, in schema order', () => {
     let lastEnv = -1;
     let lastReadme = -1;
@@ -44,8 +50,10 @@ describe('generated environment docs', () => {
       expect(envMatch, `${spec.key} in .env.example`).not.toBeNull();
       expect(envMatch?.index ?? -1).toBeGreaterThan(lastEnv);
       lastEnv = envMatch?.index ?? -1;
-      const readmeIndex = readme.indexOf(`| \`${spec.key}\``);
-      expect(readmeIndex, `${spec.key} in README.md`).toBeGreaterThan(lastReadme);
+      const readmeIndex = generated.indexOf(`| \`${spec.key}\``);
+      expect(readmeIndex, `${spec.key} in the README's generated section`).toBeGreaterThan(
+        lastReadme,
+      );
       lastReadme = readmeIndex;
     }
     for (const spec of list.filter((s) => s.hidden)) {
