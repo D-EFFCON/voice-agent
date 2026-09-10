@@ -66,10 +66,10 @@ Security lives in `src/security/`. `safeEqual` compares every secret in constant
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `LLM_PROVIDER` | no | `openai` | Which LLM answers callers. Values: openai, anthropic, google, mistral, groq. |
-| `LLM_MODEL` | no | the provider's default (openai: gpt-5-mini, anthropic: claude-haiku-4-5, google: gemini-2.5-flash, mistral: mistral-small-latest, groq: llama-3.3-70b-versatile) | Model name for the provider. Unset uses the provider's fast default. |
+| `LLM_MODEL` | no | the provider's default (openai: gpt-4o-mini, anthropic: claude-haiku-4-5-20251001, google: gemini-2.5-flash, mistral: mistral-small-latest, groq: llama-3.3-70b-versatile) | Model name for the provider. Unset uses the provider's fast default. |
 | `OPENAI_API_KEY` (secret) | when LLM_PROVIDER is openai |  | API key for OpenAI. Create one at platform.openai.com under API keys. |
 | `ANTHROPIC_API_KEY` (secret) | when LLM_PROVIDER is anthropic |  | API key for Anthropic. Create one at console.anthropic.com under API keys. |
-| `GOOGLE_GENERATIVE_AI_API_KEY` (secret) | when LLM_PROVIDER is google |  | API key for Google Generative AI. Create one at aistudio.google.com. |
+| `GOOGLE_GENERATIVE_AI_API_KEY` (secret) | when LLM_PROVIDER is google |  | API key for Google Generative AI. Create one in Google AI Studio. |
 | `MISTRAL_API_KEY` (secret) | when LLM_PROVIDER is mistral |  | API key for Mistral. Create one at console.mistral.ai under API keys. |
 | `GROQ_API_KEY` (secret) | when LLM_PROVIDER is groq |  | API key for Groq. Create one at console.groq.com under API keys. |
 | `LLM_TIMEOUT_MS` | no | `20000` | How long to wait for the model, in milliseconds: for the whole reply and for any gap between words. On timeout the caller hears FALLBACK_MESSAGE and goes to a person. |
