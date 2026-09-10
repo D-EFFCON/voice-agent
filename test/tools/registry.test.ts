@@ -1,8 +1,14 @@
 import type { Logger } from 'pino';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { presets, tools } from '../../src/tools/registry.js';
-import type { ToolDefinition, ToolResult } from '../../src/tools/types.js';
+import { createTools, presets, toolNames } from '../../src/tools/registry.js';
+import type { AutomationClient, ToolDefinition, ToolResult } from '../../src/tools/types.js';
+
+/** The tools need an automation client; these tests only care that the array is well formed. */
+const silentAutomation: AutomationClient = {
+  post: () => Promise.resolve({ status: 'skipped', fields: {}, ms: 0 }),
+};
+const tools = createTools({ automation: silentAutomation });
 
 describe('tools registry', () => {
   it('lists the four presets in order with their metadata', () => {
@@ -25,8 +31,9 @@ describe('tools registry', () => {
     for (const p of presets) expect(JSON.parse(JSON.stringify(p))).toEqual(p);
   });
 
-  it('the tools array is well formed (handoff_to_team lands with its feature)', () => {
+  it('the tools array is well formed and lists exactly the v1 tool', () => {
     expect(Array.isArray(tools)).toBe(true);
+    expect(tools.map((t) => t.name)).toEqual([...toolNames]);
     const names = tools.map((t) => t.name);
     expect(new Set(names).size).toBe(names.length);
     for (const t of tools) {
