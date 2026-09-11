@@ -1,6 +1,9 @@
 node_modules/
 dist/
+coverage/
+*.tsbuildinfo
 .env
 .env.*
 !.env.example
 .claude/workflows/
+.claude/project/
