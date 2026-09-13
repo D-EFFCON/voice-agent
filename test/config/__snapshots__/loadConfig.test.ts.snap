@@ -12,7 +12,7 @@ exports[`loadConfig fault table > the rendered problem strings, which the README
   "AUTOMATION_WEBHOOK_URL: is not an https URL. Paste the full webhook URL from your automation tool; it must start with https://.",
   "AUTOMATION_WEBHOOK_URL: is not set. Paste the webhook URL from your automation tool, or set AUTOMATION_PROVIDER to none.",
   "AUTOMATION_WEBHOOK_URL: is set but AUTOMATION_PROVIDER is none, so it is ignored. Set AUTOMATION_PROVIDER to make, zapier or n8n.",
-  "AUTOMATION_WEBHOOK_URL: points at a loopback or link-local address, which the server cannot reach. Use the public https URL of your webhook.",
+  "AUTOMATION_WEBHOOK_URL: points at an address inside a private network, which the server cannot reach. Use the public https URL of your webhook.",
   "HANDOFF_INCLUDE_TRANSCRIPT: is not true or false, so false is used. Set it to true or false, or remove it.",
   "IDLE_TIMEOUT_SECONDS: is not a whole number between 5 and 600, so 60 is used. Set it to a whole number in that range, or remove it.",
   "LLM_PROVIDER: cannot be used because this build registers no LLM providers. Report this as a bug; the registry in src/llm/registry.ts is empty.",

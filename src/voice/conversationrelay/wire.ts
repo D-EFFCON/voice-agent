@@ -31,9 +31,19 @@ export const setupFrame = z.object({
   customParameters: z.record(z.string(), z.string()).catch({}),
 });
 
+/**
+ * The longest utterance the server acts on. A frame may be as large as the socket's 64 KB
+ * payload cap, and every utterance is then carried in the history sent to the model on every
+ * later turn of the call, so one huge frame would set the price of the whole call. Speech never
+ * reaches this length - a caller would have to talk for minutes without pausing - so anything
+ * longer is a broken or hostile sender. Cut rather than refused, because inbound frames are
+ * lenient and a caller who really did ramble should still be answered.
+ */
+export const UTTERANCE_MAX_CHARS = 4_000;
+
 export const promptFrame = z.object({
   type: z.literal('prompt'),
-  voicePrompt: z.string(),
+  voicePrompt: z.string().transform((text) => text.slice(0, UTTERANCE_MAX_CHARS)),
   lang: z.string().optional(),
   /** Acted on only when true. */
   last: z.boolean(),

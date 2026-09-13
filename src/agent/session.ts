@@ -10,6 +10,8 @@
  *    older generation ever reaches the socket. That is what makes an interrupt sound instant.
  * 3. One tool call per turn, run once. A model that emits two calls gets the first one honoured.
  * 4. Exactly one turn.timing line per turn, so latency in the logs is countable.
+ * 5. A terminal tool runs at most once per call. Its side effect leaves the process, so once one
+ *    starts the call is committed and nothing the caller does can reach a second one.
  *
  * There is deliberately NO LLM timeout timer here. The client owns that budget, and a timer in the
  * agent would abort the request first, which the client would report as an interrupt: every real
@@ -40,6 +42,13 @@ import type {
 
 /** Turns kept in history. Older ones are dropped; the system prompt is never dropped. */
 export const HISTORY_TURN_CAP = 60;
+
+/**
+ * Characters of conversation kept in history, the system prompt excluded. The turn cap bounds how
+ * many messages go to the model on each turn but says nothing about how big they are, and every
+ * turn resends the lot. This bounds what one long call can cost and how slow its last turn is.
+ */
+export const HISTORY_CHAR_CAP = 24_000;
 
 /** Model steps per utterance. One reply, or one non-terminal tool and its follow-up, and stop. */
 export const MAX_STEPS = 3;
@@ -85,6 +94,8 @@ export class CallSession implements AgentPort {
   private toolResults: ToolResult[] = [];
   private pendingInterrupt: PendingInterrupt | undefined;
   private ending = false;
+  /** Invariant 5: set the moment a terminal tool starts, never cleared. */
+  private handingOff = false;
   private outcome: Outcome | undefined;
 
   private maxCallTimer: NodeJS.Timeout | undefined;
@@ -124,7 +135,7 @@ export class CallSession implements AgentPort {
   // --- AgentPort ------------------------------------------------------------------------------
 
   onUtterance(text: string): void {
-    if (this.ending || this.state === 'ended') return;
+    if (this.ending || this.handingOff || this.state === 'ended') return;
     const said = text.trim();
     if (said === '') {
       this.armIdle();
@@ -134,7 +145,7 @@ export class CallSession implements AgentPort {
   }
 
   onInterrupt(utteranceUntilInterrupt: string): void {
-    if (this.ending || this.state === 'ended') return;
+    if (this.ending || this.handingOff || this.state === 'ended') return;
     // Recorded against the running generation so the turn loop knows how much the caller heard.
     this.pendingInterrupt = { generation: this.generation, spoken: utteranceUntilInterrupt };
     this.abort?.abort();
@@ -282,6 +293,15 @@ export class CallSession implements AgentPort {
         });
         continue;
       }
+
+      /**
+       * Invariant 5. A terminal tool hands the caller to a person, and its side effect - the
+       * webhook post - cannot be called back once it is in flight. Aborting the request does not
+       * un-send it. So the call commits here, before the await: a new utterance or an interrupt
+       * arriving mid-post can no longer abort this tool, supersede this turn and let the model
+       * reach the same tool a second time, which would have notified the team twice.
+       */
+      if (tool.terminal) this.handingOff = true;
 
       const ran = await this.runTool(tool, toolCall);
       timing.tool_name = tool.name;
@@ -644,6 +664,15 @@ export class CallSession implements AgentPort {
   private trimHistory(): void {
     const overBy = this.history.length - 1 - HISTORY_TURN_CAP;
     if (overBy > 0) this.history.splice(1, overBy);
+
+    // Then by size, oldest first. The newest message is always kept, however long it is: the
+    // caller just said it, and the wire already cut it to UTTERANCE_MAX_CHARS.
+    let chars = 0;
+    for (let i = 1; i < this.history.length; i += 1) chars += this.history[i]?.content.length ?? 0;
+    while (chars > HISTORY_CHAR_CAP && this.history.length > 2) {
+      chars -= this.history[1]?.content.length ?? 0;
+      this.history.splice(1, 1);
+    }
   }
 
   /** For the test chat, which shows the outcome of a finished conversation. */

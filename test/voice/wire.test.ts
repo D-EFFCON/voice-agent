@@ -6,6 +6,7 @@ import {
   outboundFrame,
   parseInboundFrame,
   textFrame,
+  UTTERANCE_MAX_CHARS,
 } from '../../src/voice/conversationrelay/wire.js';
 
 /** The setup message as Twilio's reference documents it, plus fields this server ignores. */
@@ -160,6 +161,26 @@ describe('inbound frames', () => {
   it('the union schema itself accepts the documented shapes', () => {
     expect(inboundFrame.safeParse(documentedSetup).success).toBe(true);
     expect(inboundFrame.safeParse({ type: 'bogus' }).success).toBe(false);
+  });
+
+  it('cuts an overlong voicePrompt instead of refusing the frame', () => {
+    const huge = 'a'.repeat(UTTERANCE_MAX_CHARS + 5_000);
+    const result = parseInboundFrame(
+      JSON.stringify({ type: 'prompt', voicePrompt: huge, last: true }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.frame.type !== 'prompt') return;
+    expect(result.frame.voicePrompt).toHaveLength(UTTERANCE_MAX_CHARS);
+    expect(result.frame.last).toBe(true);
+  });
+
+  it('leaves an utterance of a normal length alone', () => {
+    const said = 'I would like to speak to someone about my bill, please.';
+    const result = parseInboundFrame(
+      JSON.stringify({ type: 'prompt', voicePrompt: said, last: true }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok && result.frame.type === 'prompt') expect(result.frame.voicePrompt).toBe(said);
   });
 });
 
