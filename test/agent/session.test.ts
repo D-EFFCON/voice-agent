@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { CallSession } from '../../src/agent/session.js';
+import { CallSession, HISTORY_CHAR_CAP } from '../../src/agent/session.js';
 import type { AgentSettings } from '../../src/agent/types.js';
 import type { LlmMessage } from '../../src/llm/types.js';
 import type { ToolDefinition, ToolResult, ToolSettings } from '../../src/tools/types.js';
@@ -247,6 +247,74 @@ describe('invariant: exactly one turn.timing per turn', () => {
 });
 
 // --- Speaking ----------------------------------------------------------------------------------
+
+// --- Invariant 5: a terminal tool runs at most once --------------------------------------------
+
+describe('invariant: a terminal tool runs at most once per call', () => {
+  /** A terminal tool the test can hold open, standing in for a webhook that is slow to answer. */
+  function heldTool(state: { runs: number; release: () => void }): ToolDefinition {
+    return {
+      name: 'handoff_to_team',
+      description: 'Test tool handoff_to_team.',
+      inputSchema: z.object({ reason: z.string().optional() }),
+      terminal: true,
+      run: async () => {
+        state.runs += 1;
+        await new Promise<void>((resolve) => {
+          state.release = resolve;
+        });
+        return { modelText: 'done', end: HANDOFF_END };
+      },
+    };
+  }
+
+  it('ignores the caller while the handoff is still posting, so nobody is notified twice', async () => {
+    const state = { runs: 0, release: (): void => {} };
+    const h = harness({
+      turns: [
+        [{ toolCall: { name: 'handoff_to_team', input: {} } }],
+        [{ toolCall: { name: 'handoff_to_team', input: {} } }],
+      ],
+      tools: [heldTool(state)],
+    });
+
+    h.session.onUtterance('I want a person');
+    await settle();
+    expect(state.runs).toBe(1);
+
+    // The post is in flight and cannot be called back. Aborting the request would not un-send it,
+    // so a caller talking over it must not start a turn that reaches the same tool again.
+    h.session.onUtterance('hello? are you there?');
+    h.session.onInterrupt('hello?');
+    await settle();
+    expect(state.runs).toBe(1);
+
+    state.release();
+    await h.out.whenEnded;
+
+    expect(state.runs).toBe(1);
+    expect(h.out.endCalls).toHaveLength(1);
+  });
+
+  it('still ends on the handoff the tool reported, not on a lost turn', async () => {
+    const state = { runs: 0, release: (): void => {} };
+    const h = harness({
+      turns: [[{ toolCall: { name: 'handoff_to_team', input: {} } }]],
+      tools: [heldTool(state)],
+    });
+
+    h.session.onUtterance('put me through');
+    await settle();
+    h.session.onUtterance('still there?');
+    state.release();
+    await h.out.whenEnded;
+
+    expect(h.out.endCalls[0]).toMatchObject({
+      reason: 'caller_request',
+      reasonCode: 'live-agent-handoff',
+    });
+  });
+});
 
 describe('speaking a turn', () => {
   it('streams the words and closes with exactly one last frame', async () => {
@@ -536,6 +604,26 @@ describe('housekeeping', () => {
     const history = h.session.snapshot().history;
     expect(history[0]).toEqual({ role: 'system', content: SETTINGS.SYSTEM_PROMPT });
     expect(history.length).toBeLessThanOrEqual(61);
+  });
+
+  it('bounds history by characters, so one long utterance cannot price every later turn', async () => {
+    const long = 'x'.repeat(3_000);
+    const h = harness({
+      turns: Array.from({ length: 20 }, (_, i) => tokens(`reply ${String(i)}`)),
+    });
+
+    for (let i = 0; i < 20; i += 1) {
+      h.session.onUtterance(long);
+      await settle(8);
+    }
+
+    const history = h.session.snapshot().history;
+    const conversation = history.slice(1).reduce((n, m) => n + m.content.length, 0);
+    expect(conversation).toBeLessThanOrEqual(HISTORY_CHAR_CAP);
+    expect(history[0]).toEqual({ role: 'system', content: SETTINGS.SYSTEM_PROMPT });
+    // The newest thing the caller said is always still there, however long it was.
+    const lastUser = [...history].reverse().find((m) => m.role === 'user');
+    expect(lastUser?.content).toBe(long);
   });
 
   it('does not keep the caller waiting when the adapter cannot send the end frame', async () => {

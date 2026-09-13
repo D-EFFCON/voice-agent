@@ -157,7 +157,7 @@ export const messages = {
   ),
   webhookUrlLocal: blocking(
     'AUTOMATION_WEBHOOK_URL',
-    'points at a loopback or link-local address, which the server cannot reach',
+    'points at an address inside a private network, which the server cannot reach',
     'Use the public https URL of your webhook',
   ),
   webhookUrlIgnored: (otherPresetIds: readonly string[]): ConfigProblem =>
