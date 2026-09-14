@@ -490,14 +490,27 @@ export class CallSession implements AgentPort {
     this.pendingInterrupt = undefined;
     timing.interrupted = true;
 
-    // History should say what the caller actually heard. Twilio reports the words it managed to
-    // speak; when that is a prefix of what we sent, it is the truth, so use it.
+    // History should say what the caller actually heard, not everything the model produced.
+    // Twilio reports the words it managed to speak, and that report is the better account of what
+    // reached the ear either way, so it is what gets written.
+    //
+    // It is normally a prefix of what we sent. When it is not - text normalisation rewriting a
+    // number on its way to the voice is the usual cause - the report and our text have diverged,
+    // and that is worth a line, because it is the one thing that would put this truncation in the
+    // wrong place and it is otherwise invisible. It is logged rather than acted on: the words
+    // Twilio spoke are still closer to the truth than the full text the caller plainly did not
+    // hear, since they interrupted it.
     const heard = interrupt.spoken.trim();
+    if (heard !== '' && !spoken.startsWith(heard)) {
+      this.log.debug(
+        { event: 'turn.interrupted', turn: this.turn, spoken_prefix: false },
+        'the words Twilio reported speaking are not a prefix of the words sent',
+      );
+    }
     for (let i = this.history.length - 1; i >= 0; i -= 1) {
       const message = this.history[i];
       if (message?.role !== 'assistant') continue;
-      if (heard !== '' && spoken.startsWith(heard)) message.content = heard;
-      else if (heard !== '') message.content = heard;
+      if (heard !== '') message.content = heard;
       else this.history.splice(i, 1);
       break;
     }

@@ -76,6 +76,7 @@ Drag in three widgets and connect them like this.
 
 - **WebSocket URL**: the URL you wrote down in step 4.
 - **Welcome Greeting**: what the caller hears first, before the AI says anything. Something like `Hi, you've reached Example Company. How can I help?`
+- **AI Hints**: worth two minutes. A comma-separated list of the words a phone line mishears on your calls — your company name, a surname, a street or a suburb, a product. Transcription gets better on exactly the words that matter to you, which are usually the ones a general model has never seen.
 - Leave everything else alone for now. Language, voice and speech settings all have sensible defaults, and you can come back to them.
 
 Note the widget's name. It will be something like `run_crelay_1`. You need it in the next step.
@@ -155,6 +156,8 @@ Every setting is in the table at the bottom of this page.
 
 **Twilio says the connection was refused.** In the Railway logs look for `ws.rejected`. The `reason` tells you which check failed: `path` means the secret in the URL is wrong, `signature` means `TWILIO_AUTH_TOKEN` does not match your account, `not_ready` means fix the problems on the status page first, and `capacity` means all your call slots are busy.
 
+**The agent talks over itself, or stops mid-sentence for no reason.** ConversationRelay stops speaking the moment it hears the caller, and by default a “mm-hmm” or a “yeah” counts as the caller speaking. Twilio has two settings that soften this, `ignoreBackchannel` and `interruptSensitivity`, but the Studio widget does not offer them: they exist only if you write the `<ConversationRelay>` TwiML yourself instead of using Studio, which this guide does not cover. If your callers ring from cars and cafes and the agent keeps cutting itself off, that is the cause.
+
 **Reading the logs.** Railway's log view accepts a filter. `@event:call.ended` shows one line per finished call with an `outcome`: `handoff` means a person took over, `completed` means the AI finished normally, `caller_hangup` means they hung up, and `error` or `timeout` mean something went wrong. `@event:turn.timing` shows how fast each reply was.
 
 Still stuck? Open an issue on GitHub and paste what your status page says. Do not paste your keys.
@@ -170,6 +173,8 @@ The logs are the exception, and they are worth knowing about. Every call writes 
 **Recording calls and telling callers about it is your responsibility, not this template's.** The rules differ by country and by state, and in many places you must tell the caller before recording. This template records nothing by default and takes no position on your local law. If you turn on Twilio's call recording, or if your automation stores what callers say, find out what your jurisdiction requires and put it in your greeting.
 
 `HANDOFF_INCLUDE_TRANSCRIPT` is off by default. Turning it on sends what the caller said to your automation tool.
+
+**Do not take card numbers on this line.** Twilio asks you to keep payment card data out of the greeting, the hints and the handoff data, and the handoff data is where this server puts its summary of the call. Nothing here is built to hold card details safely, so keep them off the call and send people to something that is.
 
 ---
 
