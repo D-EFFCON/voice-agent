@@ -30,6 +30,12 @@ export interface MockWebhookReply {
   delayMs?: number;
   /** Never answer; the connection stays open until close(). */
   hang?: boolean;
+  /**
+   * Answer with the status and headers, send the first bytes of the body, then never finish it.
+   * A scenario that accepted the post and then stalled, which reads very differently from one that
+   * never answered at all.
+   */
+  stallBody?: boolean;
 }
 
 export type MockWebhookReplier = MockWebhookReply | ((req: MockWebhookRequest) => MockWebhookReply);
@@ -152,6 +158,16 @@ export class MockWebhookServer {
 
     const reply = typeof this.replier === 'function' ? this.replier(record) : this.replier;
     if (reply.hang) return;
+    if (reply.stallBody) {
+      // No content-length, so this goes out chunked: the client has a response to read from and
+      // then waits on a body that never arrives.
+      res.writeHead(reply.status ?? 200, {
+        'content-type': 'application/json; charset=utf-8',
+        ...reply.headers,
+      });
+      res.write('{"transfer_to":');
+      return;
+    }
     if (reply.delayMs) await new Promise((resolve) => setTimeout(resolve, reply.delayMs));
 
     const headers: Record<string, string> = { ...reply.headers };

@@ -115,6 +115,23 @@ describe('inbound frames', () => {
     });
   });
 
+  it('a prompt with no usable last field is treated as final, not dropped', () => {
+    // partialPrompts is off unless the TwiML asks for it, so an unlabelled prompt is a final one.
+    // The alternative is a malformed frame, which the link logs and ignores - and an ignored
+    // prompt is a caller who said something and got silence back.
+    const missing = parseInboundFrame('{"type":"prompt","voicePrompt":"I want a person"}');
+    expect(missing.ok).toBe(true);
+    if (!missing.ok || missing.frame.type !== 'prompt') return;
+    expect(missing.frame.last).toBe(true);
+
+    const odd = parseInboundFrame('{"type":"prompt","voicePrompt":"I want a person","last":"yes"}');
+    expect(odd.ok && odd.frame.type === 'prompt' && odd.frame.last).toBe(true);
+
+    // A real false still means a partial, which the link declines to act on.
+    const partial = parseInboundFrame('{"type":"prompt","voicePrompt":"I want","last":false}');
+    expect(partial.ok && partial.frame.type === 'prompt' && partial.frame.last).toBe(false);
+  });
+
   it('a prompt without voicePrompt is malformed', () => {
     const result = parseInboundFrame('{"type":"prompt","last":true}');
     expect(result).toEqual({

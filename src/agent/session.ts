@@ -79,6 +79,27 @@ interface PendingInterrupt {
   spoken: string;
 }
 
+/**
+ * One turn, kept after the turn loop has gone. Twilio interrupts playback rather than generation,
+ * and playback outlives generation, so an interrupt frame can arrive with nobody left to act on it;
+ * it is also why the turn's history entry is held by reference rather than looked up later, when
+ * the newest assistant message may well belong to a different turn.
+ */
+interface TurnRecord {
+  generation: number;
+  timing: TurnTiming;
+  /** The history entry this turn's words went into, if it said any. */
+  assistant: LlmMessage | undefined;
+  /** False once something else has been pushed after it, so the next words open a new entry. */
+  assistantOpen: boolean;
+  /** Everything handed to the voice for this turn, which an interrupt report is checked against. */
+  spoken: string;
+  /** The turn loop is still running, so it will do the finalising itself. */
+  generating: boolean;
+  /** Invariant 4: the timing line goes out exactly once. */
+  timed: boolean;
+}
+
 export class CallSession implements AgentPort {
   private readonly deps: SessionDeps;
   private readonly log: Logger;
@@ -93,6 +114,8 @@ export class CallSession implements AgentPort {
   private timings: TurnTiming[] = [];
   private toolResults: ToolResult[] = [];
   private pendingInterrupt: PendingInterrupt | undefined;
+  /** The newest turn, running or finished. A late interrupt has nothing else to aim at. */
+  private current: TurnRecord | undefined;
   private ending = false;
   /** Invariant 5: set the moment a terminal tool starts, never cleared. */
   private handingOff = false;
@@ -151,6 +174,12 @@ export class CallSession implements AgentPort {
     this.abort?.abort();
     this.armIdle();
     this.log.debug({ event: 'turn.interrupted', turn: this.turn }, 'caller interrupted');
+
+    // Twilio interrupts the speaking, not the generating, and the speaking outlasts it: an
+    // interrupt routinely arrives after the turn loop has finished and gone. Nothing would come
+    // back for it, and history would go on claiming the caller heard the words they talked over.
+    const record = this.current;
+    if (record !== undefined && !record.generating) this.finalizeTurn(record);
   }
 
   onDtmf(digit: string): void {
@@ -216,15 +245,23 @@ export class CallSession implements AgentPort {
       interrupted: false,
       tokens_out: 0,
     };
+    const record: TurnRecord = {
+      generation,
+      timing,
+      assistant: undefined,
+      assistantOpen: false,
+      spoken: '',
+      generating: true,
+      timed: false,
+    };
+    this.current = record;
 
-    let spokenThisTurn = '';
     let failure: HandoffReason | undefined;
     let terminalResult: { tool: ToolDefinition; result: ToolResult; ms: number } | undefined;
 
     for (let step = 1; step <= MAX_STEPS; step += 1) {
       let firstTokenMs: number | undefined;
       let completeMs: number | undefined;
-      let stepText = '';
       /** Single-flight: only the first tool call of a step is honoured. */
       let call: { toolCallId: string; name: string; input: unknown } | undefined;
       let errored: HandoffReason | undefined;
@@ -240,13 +277,8 @@ export class CallSession implements AgentPort {
         if (generation !== this.generation || this.ending) break;
 
         const handled = this.handleEvent(event, {
-          generation,
-          timing,
+          record,
           t0,
-          onText: (text) => {
-            stepText += text;
-            spokenThisTurn += text;
-          },
           onFirstToken: (at) => {
             firstTokenMs ??= at;
           },
@@ -268,18 +300,24 @@ export class CallSession implements AgentPort {
         if (completeMs !== undefined) timing.ms_llm_first_to_complete = completeMs - firstTokenMs;
       }
 
-      if (generation !== this.generation || this.ending) return;
+      // Superseded or ending. Not a return: the turn still has to be finalised below, or an
+      // interrupt that landed on it is never applied and its latency never reaches the logs.
+      if (generation !== this.generation || this.ending) break;
 
       if (errored !== undefined) {
         failure = errored;
         break;
       }
 
-      // The assistant's own words go into history before any tool result, in the order they happened.
-      if (stepText !== '') this.pushHistory({ role: 'assistant', content: stepText });
-
       const toolCall = call;
       if (toolCall === undefined) break;
+
+      /**
+       * The call goes onto this turn's own assistant entry, or onto a new empty one when the model
+       * called the tool without saying anything first. A provider refuses a tool result whose call
+       * it cannot see, so from here on the two travel together.
+       */
+      this.recordToolCall(record, toolCall);
 
       const tool = this.deps.tools.find((t) => t.name === toolCall.name);
       if (tool === undefined) {
@@ -295,6 +333,29 @@ export class CallSession implements AgentPort {
       }
 
       /**
+       * Arguments are checked before the commit below, not inside runTool, and that order is the
+       * whole point. Bad arguments are a model mistake the model recovers from, so the turn carries
+       * on and it is told what happened; committing the call to a handoff over one would strand the
+       * caller, because from that moment onUtterance ignores every word they say.
+       */
+      const parsed = tool.inputSchema.safeParse(toolCall.input);
+      if (!parsed.success) {
+        this.log.warn(
+          { event: events.toolCalled, tool: tool.name, ms: 0, ok: false },
+          'tool input did not match its schema',
+        );
+        timing.tool_name = tool.name;
+        timing.tool_ms = 0;
+        this.pushHistory({
+          role: 'tool',
+          content: `The ${tool.name} tool was called with arguments it cannot use. Check the arguments and try again.`,
+          toolCallId: toolCall.toolCallId,
+          toolName: tool.name,
+        });
+        continue;
+      }
+
+      /**
        * Invariant 5. A terminal tool hands the caller to a person, and its side effect - the
        * webhook post - cannot be called back once it is in flight. Aborting the request does not
        * un-send it. So the call commits here, before the await: a new utterance or an interrupt
@@ -303,23 +364,13 @@ export class CallSession implements AgentPort {
        */
       if (tool.terminal) this.handingOff = true;
 
-      const ran = await this.runTool(tool, toolCall);
+      const ran = await this.runTool(tool, parsed.data);
       timing.tool_name = tool.name;
       timing.tool_ms = ran.ms;
 
       if (ran.kind === 'threw') {
         failure = 'llm_error';
         break;
-      }
-
-      if (ran.kind === 'refused') {
-        this.pushHistory({
-          role: 'tool',
-          content: ran.modelText,
-          toolCallId: toolCall.toolCallId,
-          toolName: tool.name,
-        });
-        continue;
       }
 
       this.toolResults.push(ran.result);
@@ -337,12 +388,20 @@ export class CallSession implements AgentPort {
       });
     }
 
-    if (generation !== this.generation || this.ending) return;
+    record.generating = false;
+
+    if (generation !== this.generation || this.ending) {
+      // Superseded, or the call is already ending. Nothing more may be spoken for this generation
+      // and there is no ending left to decide, but the turn did happen: what the caller heard of it
+      // and how long it took are still owed.
+      this.finalizeTurn(record);
+      return;
+    }
 
     // The interrupt, if one landed on this generation, decides what history says the caller heard.
-    this.applyInterrupt(generation, timing, spokenThisTurn);
+    this.applyInterrupt(record);
 
-    const saidSomething = spokenThisTurn.trim() !== '';
+    const saidSomething = record.spoken.trim() !== '';
     const end = terminalResult?.result.end;
     /**
      * A handoff whose turn was silent would drop the caller into dead air while the transfer
@@ -359,7 +418,7 @@ export class CallSession implements AgentPort {
       this.say(bridging, true, generation);
     }
 
-    this.emitTiming(timing);
+    this.finalizeTurn(record);
 
     if (failure !== undefined) {
       await this.endBecause(failure);
@@ -379,35 +438,83 @@ export class CallSession implements AgentPort {
     }
   }
 
+  /**
+   * Everything a turn still owes once it stops generating, on whichever path gets here first: the
+   * turn loop finishing, the turn loop finding itself superseded, or an interrupt arriving after
+   * the loop has gone. Each part runs at most once per turn.
+   */
+  private finalizeTurn(record: TurnRecord): void {
+    this.applyInterrupt(record);
+    // Words entered history as they were spoken rather than through pushHistory, so the caps get
+    // their one look at the finished turn here.
+    this.trimHistory();
+    this.emitTiming(record);
+  }
+
   /** Invariant 4: exactly one of these per turn. Kept in memory only for the test chat. */
-  private emitTiming(timing: TurnTiming): void {
-    if (this.deps.info.channel === 'textchat') this.timings.push(timing);
-    this.log.info({ event: events.turnTiming, ...timing }, 'turn');
+  private emitTiming(record: TurnRecord): void {
+    if (record.timed) return;
+    record.timed = true;
+    if (this.deps.info.channel === 'textchat') this.timings.push(record.timing);
+    this.log.info({ event: events.turnTiming, ...record.timing }, 'turn');
+  }
+
+  /**
+   * The turn's words go into history as they are spoken rather than in one push at the end of the
+   * step. That is what lets a turn the caller talks over leave behind what they did hear: the entry
+   * is already in place, and in the right place, before the next utterance pushes its own message.
+   */
+  private appendAssistant(record: TurnRecord, text: string): void {
+    record.spoken += text;
+    this.openAssistant(record).content += text;
+  }
+
+  /** This turn's open assistant entry, opening a new one when the last was closed behind it. */
+  private openAssistant(record: TurnRecord): LlmMessage {
+    const open = record.assistantOpen ? record.assistant : undefined;
+    if (open !== undefined) return open;
+    const entry: LlmMessage = { role: 'assistant', content: '' };
+    record.assistant = entry;
+    record.assistantOpen = true;
+    this.pushHistory(entry);
+    return entry;
+  }
+
+  /** Records the call on the assistant entry, so the result that answers it is never unpaired. */
+  private recordToolCall(
+    record: TurnRecord,
+    call: { toolCallId: string; name: string; input: unknown },
+  ): void {
+    const entry = this.openAssistant(record);
+    entry.toolCallId = call.toolCallId;
+    entry.toolName = call.name;
+    entry.toolInput = call.input;
+    // Closed here: what comes next is the result, not more speech.
+    record.assistantOpen = false;
   }
 
   /** Returns a failure reason when the stream ended badly, otherwise undefined. */
   private handleEvent(
     event: LlmEvent,
     ctx: {
-      generation: number;
-      timing: TurnTiming;
+      record: TurnRecord;
       t0: number;
-      onText: (text: string) => void;
       onFirstToken: (at: number) => void;
       onComplete: (at: number) => void;
       onToolCall: (call: { toolCallId: string; name: string; input: unknown }) => void;
     },
   ): HandoffReason | undefined {
+    const timing = ctx.record.timing;
     switch (event.type) {
       case 'text-delta': {
         const at = this.deps.now();
         ctx.onFirstToken(at);
-        ctx.onText(event.text);
-        ctx.timing.tokens_out += 1;
+        this.appendAssistant(ctx.record, event.text);
+        timing.tokens_out += 1;
         // Measured at the send call, which is the moment the adapter hands the frame to the socket.
-        ctx.timing.ms_prompt_to_first_text_out ??= at - ctx.t0;
-        ctx.timing.ms_prompt_to_last_text_out = at - ctx.t0;
-        this.say(event.text, false, ctx.generation);
+        timing.ms_prompt_to_first_text_out ??= at - ctx.t0;
+        timing.ms_prompt_to_last_text_out = at - ctx.t0;
+        this.say(event.text, false, ctx.record.generation);
         return undefined;
       }
       case 'tool-call': {
@@ -436,35 +543,18 @@ export class CallSession implements AgentPort {
   }
 
   /**
-   * Three outcomes, and they are not the same thing. 'ran' is the tool's own answer. 'refused' is a
-   * model mistake the model can recover from, so the call carries on and it is told what happened;
-   * ending a call because a model sent a bad argument would be its own bug. 'threw' is our bug, and
-   * the caller gets a person rather than paying for it.
+   * Two outcomes. 'ran' is the tool's own answer. 'threw' is our bug, and the caller gets a person
+   * rather than paying for it. Arguments that do not match the schema never reach here: the turn
+   * loop refuses them before the call is committed, because ending a call, or committing it to a
+   * handoff, because a model sent a bad argument would be its own bug.
    */
   private async runTool(
     tool: ToolDefinition,
-    call: { toolCallId: string; name: string; input: unknown },
-  ): Promise<
-    | { kind: 'ran'; result: ToolResult; ms: number }
-    | { kind: 'refused'; modelText: string; ms: number }
-    | { kind: 'threw'; ms: number }
-  > {
+    input: unknown,
+  ): Promise<{ kind: 'ran'; result: ToolResult; ms: number } | { kind: 'threw'; ms: number }> {
     const startedMs = this.deps.now();
-    const parsed = tool.inputSchema.safeParse(call.input);
-    if (!parsed.success) {
-      this.log.warn(
-        { event: events.toolCalled, tool: tool.name, ms: 0, ok: false },
-        'tool input did not match its schema',
-      );
-      return {
-        kind: 'refused',
-        modelText: `The ${tool.name} tool was called with arguments it cannot use. Check the arguments and try again.`,
-        ms: 0,
-      };
-    }
-
     try {
-      const result = await tool.run(parsed.data, {
+      const result = await tool.run(input, {
         call: this.deps.info,
         history: this.history,
         settings: this.deps.settings,
@@ -484,23 +574,50 @@ export class CallSession implements AgentPort {
     }
   }
 
-  private applyInterrupt(generation: number, timing: TurnTiming, spoken: string): void {
+  private applyInterrupt(record: TurnRecord): void {
     const interrupt = this.pendingInterrupt;
-    if (interrupt === undefined || interrupt.generation !== generation) return;
+    if (interrupt === undefined || interrupt.generation !== record.generation) return;
+    // Taking it is what makes this idempotent: whichever path gets here first does the rewriting,
+    // and a later pass over the same turn finds nothing left to apply.
     this.pendingInterrupt = undefined;
-    timing.interrupted = true;
+    record.timing.interrupted = true;
 
-    // History should say what the caller actually heard. Twilio reports the words it managed to
-    // speak; when that is a prefix of what we sent, it is the truth, so use it.
+    // History should say what the caller actually heard, not everything the model produced.
+    // Twilio reports the words it managed to speak, and that report is the better account of what
+    // reached the ear either way, so it is what gets written.
+    //
+    // It is normally a prefix of what we sent. When it is not - text normalisation rewriting a
+    // number on its way to the voice is the usual cause - the report and our text have diverged,
+    // and that is worth a line, because it is the one thing that would put this truncation in the
+    // wrong place and it is otherwise invisible. It is logged rather than acted on: the words
+    // Twilio spoke are still closer to the truth than the full text the caller plainly did not
+    // hear, since they interrupted it.
     const heard = interrupt.spoken.trim();
-    for (let i = this.history.length - 1; i >= 0; i -= 1) {
-      const message = this.history[i];
-      if (message?.role !== 'assistant') continue;
-      if (heard !== '' && spoken.startsWith(heard)) message.content = heard;
-      else if (heard !== '') message.content = heard;
-      else this.history.splice(i, 1);
-      break;
+    if (heard !== '' && !record.spoken.startsWith(heard)) {
+      this.log.debug(
+        { event: 'turn.interrupted', turn: record.timing.turn, spoken_prefix: false },
+        'the words Twilio reported speaking are not a prefix of the words sent',
+      );
     }
+
+    // This turn's own entry, held by reference. Searching back for the newest assistant message
+    // would find a different turn's words as soon as an interrupt arrives a moment late.
+    const entry = record.assistant;
+    if (entry === undefined) return;
+    if (heard !== '') {
+      entry.content = heard;
+      return;
+    }
+    // None of it reached the ear, so the entry goes - unless it carries the call a tool result
+    // below answers, which would leave that result unpaired.
+    if (entry.toolCallId !== undefined) {
+      entry.content = '';
+      return;
+    }
+    const at = this.history.indexOf(entry);
+    if (at !== -1) this.history.splice(at, 1);
+    record.assistant = undefined;
+    record.assistantOpen = false;
   }
 
   // --- Speaking -------------------------------------------------------------------------------
@@ -656,6 +773,10 @@ export class CallSession implements AgentPort {
 
   /** The only way history grows, so the cap below is never bypassed. */
   private pushHistory(message: LlmMessage): void {
+    // Anything pushed behind the turn's words closes that entry: whatever the model says next
+    // belongs after this message rather than appended to the one before it.
+    const record = this.current;
+    if (record !== undefined && message !== record.assistant) record.assistantOpen = false;
     this.history.push(message);
     this.trimHistory();
   }
@@ -672,6 +793,30 @@ export class CallSession implements AgentPort {
     while (chars > HISTORY_CHAR_CAP && this.history.length > 2) {
       chars -= this.history[1]?.content.length ?? 0;
       this.history.splice(1, 1);
+    }
+
+    this.dropUnpairedToolResults();
+  }
+
+  /**
+   * Both caps work from the oldest message forward and know nothing about pairs, so either can drop
+   * the assistant message that made a call and leave the result standing behind it. A provider
+   * refuses a tool result whose call it cannot see, and that refusal costs the whole turn rather
+   * than the one line of context, so the widow goes with it.
+   */
+  private dropUnpairedToolResults(): void {
+    const calls = new Set<string>();
+    for (let i = 0; i < this.history.length; i += 1) {
+      const message = this.history[i];
+      if (message === undefined) continue;
+      if (message.role === 'assistant') {
+        if (message.toolCallId !== undefined) calls.add(message.toolCallId);
+        continue;
+      }
+      if (message.role !== 'tool') continue;
+      if (message.toolCallId !== undefined && calls.has(message.toolCallId)) continue;
+      this.history.splice(i, 1);
+      i -= 1;
     }
   }
 

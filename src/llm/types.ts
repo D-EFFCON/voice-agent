@@ -13,7 +13,12 @@ export type LlmRole = 'system' | 'user' | 'assistant' | 'tool';
 export interface LlmMessage {
   role: LlmRole;
   content: string;
-  /** Set on 'tool' messages: which call this result answers. */
+  /**
+   * The tool call this message belongs to. On an 'assistant' message it is the call the model made,
+   * with toolInput carrying the arguments; on the 'tool' message after it, the call whose result
+   * this is. Both halves travel together, because a provider refuses a result whose call it cannot
+   * see. (ADR 0003, the queued comment-only seam revision.)
+   */
   toolCallId?: string;
   toolName?: string;
   toolInput?: unknown;

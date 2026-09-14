@@ -29,6 +29,7 @@ import {
   StreamProviderError,
   streamText,
   tool,
+  type AssistantContent,
   type LanguageModel,
   type ModelMessage,
   type ToolSet,
@@ -410,13 +411,17 @@ function mapFinishReason(reason: string): LlmFinishReason {
 }
 
 /**
- * Our history to the SDK's messages. A tool message needs the call it answers, so a history entry
- * that lost its toolCallId is dropped rather than sent: the SDK refuses an unpaired tool result,
- * which would fail the whole turn instead of one line of context. v1 has only terminal tools, so
- * this path is defensive.
+ * Our history to the SDK's messages.
+ *
+ * A tool result is only ever half of a pair, and providers check for the other half: a result whose
+ * call is not in the same prompt is refused, and that refusal costs the whole turn rather than one
+ * line of context. So an assistant message carrying a call is sent as a tool-call part - ADR 0003
+ * records toolCallId on assistant messages for exactly this - and a result whose call is not among
+ * the messages, trimmed out of a long call or never recorded, is dropped rather than sent.
  */
 export function toModelMessages(messages: readonly LlmMessage[]): ModelMessage[] {
   const out: ModelMessage[] = [];
+  const called = new Set<string>();
   for (const message of messages) {
     switch (message.role) {
       case 'system':
@@ -425,12 +430,24 @@ export function toModelMessages(messages: readonly LlmMessage[]): ModelMessage[]
       case 'user':
         out.push({ role: 'user', content: message.content });
         break;
-      case 'assistant':
-        out.push({ role: 'assistant', content: message.content });
+      case 'assistant': {
+        const { toolCallId, toolName } = message;
+        if (toolCallId === undefined || toolCallId === '' || toolName === undefined) {
+          out.push({ role: 'assistant', content: message.content });
+          break;
+        }
+        called.add(toolCallId);
+        const content: Exclude<AssistantContent, string> = [];
+        // A model that called a tool without speaking first leaves no text part to send.
+        if (message.content !== '') content.push({ type: 'text', text: message.content });
+        content.push({ type: 'tool-call', toolCallId, toolName, input: message.toolInput });
+        out.push({ role: 'assistant', content });
         break;
+      }
       case 'tool': {
         const { toolCallId, toolName } = message;
         if (toolCallId === undefined || toolCallId === '' || toolName === undefined) break;
+        if (!called.has(toolCallId)) break;
         out.push({
           role: 'tool',
           content: [

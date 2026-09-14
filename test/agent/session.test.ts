@@ -173,6 +173,24 @@ describe('invariant: nothing is spoken for an old generation', () => {
     expect(assistant.at(-1)?.content).toBe('One two');
   });
 
+  it('records what was heard even when it is not a prefix of what was sent', async () => {
+    // Twilio's report can diverge from our text - normalisation on the way to the voice is the
+    // usual reason. The report still wins, because the caller interrupted and so plainly did not
+    // hear the rest, and the divergence is logged so it is not invisible.
+    const h = harness({ turns: [tokens('You owe 20 dollars exactly', 15)] });
+
+    h.session.onUtterance('how much do I owe');
+    await settle(25);
+    h.session.onInterrupt('You owe twenty');
+    await settle(120);
+
+    const assistant = h.session
+      .snapshot()
+      .history.filter((m: LlmMessage) => m.role === 'assistant');
+    expect(assistant.at(-1)?.content).toBe('You owe twenty');
+    expect(h.logs.lines().some((l) => l.spoken_prefix === false)).toBe(true);
+  });
+
   it('a new utterance supersedes the turn still streaming', async () => {
     const h = harness({
       turns: [tokens('First answer here', 20), tokens('Second answer')],
@@ -550,6 +568,74 @@ describe('tools that misbehave', () => {
 
     expect(h.out.endCalls).toEqual([]);
     expect(h.logs.lines().some((l) => l.event === 'tool.called' && l.ok === false)).toBe(true);
+  });
+
+  it('tool arguments the schema refuses leave the caller still being listened to', async () => {
+    const strict: ToolDefinition = {
+      name: 'handoff_to_team',
+      description: 'Needs a reason.',
+      inputSchema: z.object({ reason: z.string() }),
+      terminal: true,
+      run: () => Promise.resolve({ modelText: 'ran', end: HANDOFF_END }),
+    };
+    const h = harness({
+      turns: [
+        [{ toolCall: { name: 'handoff_to_team', input: { wrong: 1 } } }],
+        tokens('who should I ask for?'),
+        tokens('right you are'),
+      ],
+      tools: [strict],
+    });
+
+    h.session.onUtterance('person please');
+    await settle(60);
+    h.session.onUtterance('billing, please');
+    await settle(60);
+
+    // Invariant 5 commits the call the moment a terminal tool starts, and nothing clears it. The
+    // commit therefore has to wait until there is a real call to commit to: arguments a model got
+    // wrong are a mistake it recovers from, and committing over one left the caller talking to a
+    // server that had stopped listening.
+    expect(h.out.text()).toContain('right you are');
+    expect(h.llm.calls).toHaveLength(3);
+  });
+
+  it('never leaves a tool result in history without the call it answers', async () => {
+    const strict: ToolDefinition = {
+      name: 'handoff_to_team',
+      description: 'Needs a reason.',
+      inputSchema: z.object({ reason: z.string() }),
+      terminal: true,
+      run: () => Promise.resolve({ modelText: 'ran', end: HANDOFF_END }),
+    };
+    /*
+     * Sized so the character cap drops the assistant message carrying the call and then stops,
+     * well short of the small tool result behind it: that widow is what a provider refuses, and
+     * dropping it is the only thing this test is about.
+     */
+    const bulky = 'x'.repeat(23_000);
+    const h = harness({
+      turns: [
+        [{ text: bulky }, { toolCall: { name: 'handoff_to_team', input: { wrong: 1 } } }],
+        tokens('who should I ask for?'),
+        tokens('right you are'),
+      ],
+      tools: [strict],
+    });
+
+    h.session.onUtterance('person please');
+    await settle(60);
+
+    const paired = h.session.snapshot().history;
+    expect(paired.some((m) => m.role === 'assistant' && m.toolCallId === 'call_1')).toBe(true);
+    expect(paired.some((m) => m.role === 'tool' && m.toolCallId === 'call_1')).toBe(true);
+
+    h.session.onUtterance('y'.repeat(1_000));
+    await settle(60);
+
+    const after = h.session.snapshot().history;
+    expect(after.some((m) => m.role === 'assistant' && m.toolCallId === 'call_1')).toBe(false);
+    expect(after.some((m) => m.role === 'tool')).toBe(false);
   });
 });
 
