@@ -163,7 +163,9 @@ Still stuck? Open an issue on GitHub and paste what your status page says. Do no
 
 ## Privacy and recording
 
-This server stores nothing. A conversation lives in memory during the call and is gone when it ends. Nothing is sent anywhere except the AI provider you chose and the webhook you configured.
+This server has no database. A conversation lives in memory during the call and is gone when it ends. Nothing is sent anywhere except the AI provider you chose and the webhook you configured.
+
+The logs are the exception, and they are worth knowing about. Every call writes lines carrying its Twilio call SID and the caller's and called numbers, and your host keeps those lines for you to read — Railway holds them for days. So "nothing is stored" is true of the conversation, not of who rang and when. Leave `LOG_LEVEL` at `info` in production: at `debug` the logs also carry what the caller said, turn by turn.
 
 **Recording calls and telling callers about it is your responsibility, not this template's.** The rules differ by country and by state, and in many places you must tell the caller before recording. This template records nothing by default and takes no position on your local law. If you turn on Twilio's call recording, or if your automation stores what callers say, find out what your jurisdiction requires and put it in your greeting.
 
