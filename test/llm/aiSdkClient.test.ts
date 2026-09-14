@@ -9,7 +9,7 @@ import { APICallError, LoadAPIKeyError } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createClientForModel } from '../../src/llm/aiSdkClient.js';
+import { createClientForModel, toModelMessages } from '../../src/llm/aiSdkClient.js';
 import type { LlmClient, LlmEvent, LlmMessage, LlmToolSpec } from '../../src/llm/types.js';
 
 // --- Mock plumbing ---------------------------------------------------------------------------
@@ -444,5 +444,80 @@ describe('aiSdkClient: probe', () => {
     await expect(client(throwingModel(new Error('boom'))).probe()).resolves.toMatchObject({
       ok: false,
     });
+  });
+});
+
+describe('aiSdkClient: history to the SDK', () => {
+  it('keeps a tool call with the result that answers it', () => {
+    const history: LlmMessage[] = [
+      { role: 'system', content: 'You answer a complaints line.' },
+      { role: 'user', content: 'put me through' },
+      {
+        role: 'assistant',
+        content: 'One moment.',
+        toolCallId: 'call_1',
+        toolName: 'handoff_to_team',
+        toolInput: { reason: 'wants a person' },
+      },
+      {
+        role: 'tool',
+        content: 'The handoff_to_team tool was called with arguments it cannot use.',
+        toolCallId: 'call_1',
+        toolName: 'handoff_to_team',
+      },
+    ];
+
+    // The bug: the assistant message went out as plain text, so the result arrived with no call to
+    // match. Providers that check refuse it, and the refusal costs the turn, not the line.
+    expect(toModelMessages(history)).toEqual([
+      { role: 'system', content: 'You answer a complaints line.' },
+      { role: 'user', content: 'put me through' },
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'One moment.' },
+          {
+            type: 'tool-call',
+            toolCallId: 'call_1',
+            toolName: 'handoff_to_team',
+            input: { reason: 'wants a person' },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'call_1',
+            toolName: 'handoff_to_team',
+            output: {
+              type: 'text',
+              value: 'The handoff_to_team tool was called with arguments it cannot use.',
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('sends no text part when the model called the tool without speaking', () => {
+    const [message] = toModelMessages([
+      { role: 'assistant', content: '', toolCallId: 'call_1', toolName: 'end_call', toolInput: {} },
+    ]);
+
+    expect(message).toEqual({
+      role: 'assistant',
+      content: [{ type: 'tool-call', toolCallId: 'call_1', toolName: 'end_call', input: {} }],
+    });
+  });
+
+  it('drops a result whose call a long call trimmed away, rather than failing the turn', () => {
+    const orphan: LlmMessage[] = [
+      { role: 'user', content: 'still there?' },
+      { role: 'tool', content: 'ran', toolCallId: 'call_9', toolName: 'handoff_to_team' },
+    ];
+
+    expect(toModelMessages(orphan)).toEqual([{ role: 'user', content: 'still there?' }]);
   });
 });

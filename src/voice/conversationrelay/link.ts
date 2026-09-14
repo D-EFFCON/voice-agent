@@ -9,9 +9,8 @@
  * The care in here is all about a caller's ear:
  *
  * - A frame from a superseded turn is dropped rather than spoken, so an interrupt is instant.
- * - The end frame waits a moment proportional to the words just sent, because Twilio stops the
- *   session when it arrives and a goodbye cut off mid-word sounds like a dropped call. The delay is
- *   the one number here worth tuning against a real call.
+ * - The end frame waits for the words still waiting to be spoken, because Twilio stops the session
+ *   when it arrives and a goodbye cut off mid-word sounds like a dropped call.
  * - Anything unrecognised is logged and ignored rather than treated as a fault. A new Twilio frame
  *   type must never end somebody's call.
  */
@@ -38,8 +37,9 @@ export const INBOUND_RATE_PER_SECOND = 20;
 /** Past this much unsent data, a chunk is dropped rather than queued: the caller has moved on. */
 export const BACKPRESSURE_LIMIT_BYTES = 256 * 1024;
 
-/** Base pause before the end frame, plus a little per character of the closing words. */
+/** Base pause before the end frame, on top of whatever is still waiting to be spoken. */
 export const END_GRACE_BASE_MS = 250;
+/** How long a character takes to say. The one number here worth tuning against a real call. */
 export const END_GRACE_PER_CHAR_MS = 55;
 /** Ceilings for that pause: a handoff can afford to let a sentence finish, a fault cannot. */
 export const END_GRACE_MAX_MS = 4_000;
@@ -72,8 +72,13 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
   let info: CallInfo | undefined;
   /** The newest turn the core has spoken for. Anything older is stale by definition. */
   let currentTurn = -1;
-  /** Characters sent since the last frame that closed an utterance, for the end grace. */
-  let charsSinceLast = 0;
+  /**
+   * When the text handed to Twilio so far is expected to have finished being spoken. A clock, not
+   * a character count, because streaming already spends most of the time a sentence takes to say:
+   * six words dripped out over two seconds are nearly spoken by the time the last one is sent,
+   * while the same six words in one frame still have all two seconds ahead of them.
+   */
+  let speechDoneAtMs = now();
   let endSent = false;
   let closed = false;
   let windowStart = now();
@@ -122,20 +127,23 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
       if (chunk.turn < currentTurn) return;
       if (chunk.turn > currentTurn) {
         currentTurn = chunk.turn;
-        charsSinceLast = 0;
+        // A newer turn replaces what was queued: Twilio drops the rest of an interrupted utterance.
+        speechDoneAtMs = now();
       }
       if (socket.bufferedAmount > BACKPRESSURE_LIMIT_BYTES) {
         log.warn({ buffered: socket.bufferedAmount }, 'dropped a chunk under backpressure');
         return;
       }
-      charsSinceLast += chunk.text.length;
+      // Deliberately not reset when chunk.last arrives. The frame that closes an utterance ends the
+      // sending, not the speaking, and the agent normally closes a turn with an empty token: zeroing
+      // here gave a full sentence the bare base pause before the line went.
+      speechDoneAtMs = Math.max(speechDoneAtMs, now()) + chunk.text.length * END_GRACE_PER_CHAR_MS;
       send({
         type: 'text',
         token: chunk.text,
         last: chunk.last,
         ...(chunk.interruptible === undefined ? {} : { interruptible: chunk.interruptible }),
       });
-      if (chunk.last) charsSinceLast = chunk.text.length;
     },
 
     async end(data: HandoffData): Promise<void> {
@@ -146,9 +154,8 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
       // Twilio stops the session when this frame arrives, so give the words already sent a moment
       // to be spoken. A fault waits less: the caller is going to a person either way.
       const ceiling = FAULT_REASONS.has(data.reason) ? END_GRACE_FAULT_MAX_MS : END_GRACE_MAX_MS;
-      const grace =
-        deps.endGraceMs ??
-        Math.min(ceiling, END_GRACE_BASE_MS + charsSinceLast * END_GRACE_PER_CHAR_MS);
+      const pending = Math.max(0, speechDoneAtMs - now());
+      const grace = deps.endGraceMs ?? Math.min(ceiling, END_GRACE_BASE_MS + pending);
       if (grace > 0) await new Promise((resolve) => setTimeout(resolve, grace));
 
       send({ type: 'end', handoffData: JSON.stringify(data) });
