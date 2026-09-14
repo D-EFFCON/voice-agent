@@ -18,7 +18,7 @@ import { captureLogs, type CapturedLogs } from '../helpers/logCapture.js';
 import { createRecentProblems } from '../../src/status/index.js';
 
 const SETTINGS: AgentSettings & ToolSettings = {
-  SYSTEM_PROMPT: 'You answer a complaints line.',
+  SYSTEM_PROMPT: 'You answer the phone for a small business.',
   FALLBACK_MESSAGE: 'Sorry, something went wrong. Let me put you through to someone.',
   HANDOFF_MESSAGE: 'One moment, I will put you through.',
   CLOSING_MESSAGE: 'We have been talking a while, so I will end the call here. Goodbye.',

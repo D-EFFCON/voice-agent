@@ -15,7 +15,7 @@ import { FakeVoiceOut } from '../helpers/fakeVoiceOut.js';
 import { captureLogs } from '../helpers/logCapture.js';
 
 const SETTINGS: AgentSettings & ToolSettings = {
-  SYSTEM_PROMPT: 'You answer a complaints line.',
+  SYSTEM_PROMPT: 'You answer the phone for a small business.',
   FALLBACK_MESSAGE: 'Sorry, something went wrong.',
   HANDOFF_MESSAGE: 'One moment.',
   CLOSING_MESSAGE: 'Goodbye.',

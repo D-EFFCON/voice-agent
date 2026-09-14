@@ -127,11 +127,11 @@ describe('handoff_to_team: the payload', () => {
     await tool(automation).run(
       { reason: 'x' },
       context({
-        call: { ...context().call, custom: { queue: 'complaints', tier: 'gold' } },
+        call: { ...context().call, custom: { queue: 'support', tier: 'gold' } },
       }),
     );
 
-    expect(posted[0]?.custom).toEqual({ queue: 'complaints', tier: 'gold' });
+    expect(posted[0]?.custom).toEqual({ queue: 'support', tier: 'gold' });
   });
 
   it('omits custom entirely when Studio sent none', async () => {
@@ -142,7 +142,7 @@ describe('handoff_to_team: the payload', () => {
 
   it('keeps the caller words on the server unless the deployer opts in', async () => {
     const history: LlmMessage[] = [
-      { role: 'system', content: 'You answer a complaints line.' },
+      { role: 'system', content: 'You answer the phone for a small business.' },
       { role: 'user', content: 'My parcel is broken' },
       { role: 'assistant', content: 'I am sorry to hear that.' },
     ];

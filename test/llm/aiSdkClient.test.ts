@@ -110,7 +110,7 @@ const client = (model: MockLanguageModelV4, isDefaultModel = true): LlmClient =>
   });
 
 const HELLO: LlmMessage[] = [
-  { role: 'system', content: 'You answer a complaints line.' },
+  { role: 'system', content: 'You answer the phone for a small business.' },
   { role: 'user', content: 'hello' },
 ];
 
@@ -450,7 +450,7 @@ describe('aiSdkClient: probe', () => {
 describe('aiSdkClient: history to the SDK', () => {
   it('keeps a tool call with the result that answers it', () => {
     const history: LlmMessage[] = [
-      { role: 'system', content: 'You answer a complaints line.' },
+      { role: 'system', content: 'You answer the phone for a small business.' },
       { role: 'user', content: 'put me through' },
       {
         role: 'assistant',
@@ -470,7 +470,7 @@ describe('aiSdkClient: history to the SDK', () => {
     // The bug: the assistant message went out as plain text, so the result arrived with no call to
     // match. Providers that check refuse it, and the refusal costs the turn, not the line.
     expect(toModelMessages(history)).toEqual([
-      { role: 'system', content: 'You answer a complaints line.' },
+      { role: 'system', content: 'You answer the phone for a small business.' },
       { role: 'user', content: 'put me through' },
       {
         role: 'assistant',

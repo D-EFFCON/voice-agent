@@ -81,7 +81,7 @@ class Caller {
       to: '+15550002222',
       direction: 'inbound',
       callType: 'PSTN',
-      customParameters: { queue: 'complaints' },
+      customParameters: { queue: 'support' },
     });
   }
 
@@ -224,7 +224,7 @@ describe('a call, end to end', () => {
   it('stops talking when the caller interrupts', async () => {
     const caller = await Caller.connect(server.port);
     caller.setup('CAinterrupt');
-    caller.says('tell me about my complaint');
+    caller.says('tell me about my order');
 
     await caller.until((frames) => frames.filter((f) => f.type === 'text').length >= 2);
     const spokenAtInterrupt = caller.frames.filter((f) => f.type === 'text').length;
