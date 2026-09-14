@@ -413,15 +413,25 @@ function mapFinishReason(reason: string): LlmFinishReason {
 /**
  * Our history to the SDK's messages.
  *
- * A tool result is only ever half of a pair, and providers check for the other half: a result whose
- * call is not in the same prompt is refused, and that refusal costs the whole turn rather than one
- * line of context. So an assistant message carrying a call is sent as a tool-call part - ADR 0003
- * records toolCallId on assistant messages for exactly this - and a result whose call is not among
- * the messages, trimmed out of a long call or never recorded, is dropped rather than sent.
+ * A tool call and its result are two halves of a pair, and providers check for both: neither half
+ * survives on its own. So an assistant message carrying a call is sent as a tool-call part - ADR
+ * 0003 records toolCallId on assistant messages for exactly this - and a half with nothing to pair
+ * with is dropped rather than sent, in either direction:
+ *
+ * - a result whose call is not among the messages, trimmed out of a long call or never recorded;
+ * - a call whose result is not among the messages, because the caller spoke again while the tool
+ *   was still running. The SDK refuses that prompt outright with MissingToolResultsError, which
+ *   would cost the whole call rather than one line of context. The call goes; anything the model
+ *   said before making it stays, because the caller heard it.
  */
 export function toModelMessages(messages: readonly LlmMessage[]): ModelMessage[] {
   const out: ModelMessage[] = [];
   const called = new Set<string>();
+  const answered = new Set(
+    messages
+      .filter((message) => message.role === 'tool' && message.toolName !== undefined)
+      .map((message) => message.toolCallId),
+  );
   for (const message of messages) {
     switch (message.role) {
       case 'system':
@@ -432,8 +442,15 @@ export function toModelMessages(messages: readonly LlmMessage[]): ModelMessage[]
         break;
       case 'assistant': {
         const { toolCallId, toolName } = message;
-        if (toolCallId === undefined || toolCallId === '' || toolName === undefined) {
-          out.push({ role: 'assistant', content: message.content });
+        if (
+          toolCallId === undefined ||
+          toolCallId === '' ||
+          toolName === undefined ||
+          !answered.has(toolCallId)
+        ) {
+          // An empty message is left behind by a call that was dropped, or by an interrupt the
+          // caller talked over every word of. There is nothing in it to send.
+          if (message.content !== '') out.push({ role: 'assistant', content: message.content });
           break;
         }
         called.add(toolCallId);
