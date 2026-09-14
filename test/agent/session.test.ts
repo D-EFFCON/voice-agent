@@ -173,6 +173,24 @@ describe('invariant: nothing is spoken for an old generation', () => {
     expect(assistant.at(-1)?.content).toBe('One two');
   });
 
+  it('records what was heard even when it is not a prefix of what was sent', async () => {
+    // Twilio's report can diverge from our text - normalisation on the way to the voice is the
+    // usual reason. The report still wins, because the caller interrupted and so plainly did not
+    // hear the rest, and the divergence is logged so it is not invisible.
+    const h = harness({ turns: [tokens('You owe 20 dollars exactly', 15)] });
+
+    h.session.onUtterance('how much do I owe');
+    await settle(25);
+    h.session.onInterrupt('You owe twenty');
+    await settle(120);
+
+    const assistant = h.session
+      .snapshot()
+      .history.filter((m: LlmMessage) => m.role === 'assistant');
+    expect(assistant.at(-1)?.content).toBe('You owe twenty');
+    expect(h.logs.lines().some((l) => l.spoken_prefix === false)).toBe(true);
+  });
+
   it('a new utterance supersedes the turn still streaming', async () => {
     const h = harness({
       turns: [tokens('First answer here', 20), tokens('Second answer')],
