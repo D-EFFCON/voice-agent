@@ -229,6 +229,22 @@ describe('automation client: a scenario that is broken', () => {
     expect(result.error).toContain('80 ms');
   });
 
+  it('reports timeout when the answer arrives but its body stalls', async () => {
+    mock.reply({ status: 200, stallBody: true });
+
+    const result = await client({ timeoutMs: 120 }).post(payload());
+
+    // The bug: every way of failing to read a body came back as the size cap, and the size cap is
+    // reported as a healthy 'ok'. A webhook that stalled mid-answer went into the logs, and into
+    // the handoff data a person picking the call up reads, as one that merely said too much.
+    expect(result.status).toBe('timeout');
+    expect(result.httpStatus).toBe(200);
+    expect(result.fields).toEqual({});
+    expect(result.error).toContain('stopped sending');
+    expect(result.error).not.toContain('more data than this server reads');
+    expect(logs.find('handoff.webhook')).toMatchObject({ status: 'timeout', http_status: 200 });
+  });
+
   it('reports failed when the endpoint cannot be reached at all', async () => {
     const dead: typeof fetch = () => Promise.reject(new TypeError('fetch failed'));
 
