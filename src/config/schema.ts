@@ -277,7 +277,7 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
       'Instructions for the AI, including its name and your business name. Multi-line values are fine.',
       DEFAULT_SYSTEM_PROMPT,
     ),
-    defaultDoc: 'the bundled complaints-line prompt (src/config/defaults.ts)',
+    defaultDoc: 'the bundled starter prompt (src/config/defaults.ts)',
   };
   const FALLBACK_MESSAGE = spoken(
     'FALLBACK_MESSAGE',

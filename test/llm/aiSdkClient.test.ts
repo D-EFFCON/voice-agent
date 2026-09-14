@@ -110,7 +110,7 @@ const client = (model: MockLanguageModelV4, isDefaultModel = true): LlmClient =>
   });
 
 const HELLO: LlmMessage[] = [
-  { role: 'system', content: 'You answer a complaints line.' },
+  { role: 'system', content: 'You answer the phone for a small business.' },
   { role: 'user', content: 'hello' },
 ];
 
@@ -450,7 +450,7 @@ describe('aiSdkClient: probe', () => {
 describe('aiSdkClient: history to the SDK', () => {
   it('keeps a tool call with the result that answers it', () => {
     const history: LlmMessage[] = [
-      { role: 'system', content: 'You answer a complaints line.' },
+      { role: 'system', content: 'You answer the phone for a small business.' },
       { role: 'user', content: 'put me through' },
       {
         role: 'assistant',
@@ -470,7 +470,7 @@ describe('aiSdkClient: history to the SDK', () => {
     // The bug: the assistant message went out as plain text, so the result arrived with no call to
     // match. Providers that check refuse it, and the refusal costs the turn, not the line.
     expect(toModelMessages(history)).toEqual([
-      { role: 'system', content: 'You answer a complaints line.' },
+      { role: 'system', content: 'You answer the phone for a small business.' },
       { role: 'user', content: 'put me through' },
       {
         role: 'assistant',
@@ -504,12 +504,45 @@ describe('aiSdkClient: history to the SDK', () => {
   it('sends no text part when the model called the tool without speaking', () => {
     const [message] = toModelMessages([
       { role: 'assistant', content: '', toolCallId: 'call_1', toolName: 'end_call', toolInput: {} },
+      { role: 'tool', content: 'ran', toolCallId: 'call_1', toolName: 'end_call' },
     ]);
 
     expect(message).toEqual({
       role: 'assistant',
       content: [{ type: 'tool-call', toolCallId: 'call_1', toolName: 'end_call', input: {} }],
     });
+  });
+
+  it('drops a call whose result has not arrived, rather than failing the whole call', () => {
+    // The caller spoke again while a tool was still running. The SDK checks both halves of the
+    // pair and refuses the prompt outright with MissingToolResultsError, so the call goes and the
+    // words the model said before making it stay: the caller heard those.
+    const pending: LlmMessage[] = [
+      { role: 'user', content: 'where is my order' },
+      {
+        role: 'assistant',
+        content: 'Let me look that up.',
+        toolCallId: 'call_1',
+        toolName: 'lookup_order',
+        toolInput: {},
+      },
+      { role: 'user', content: 'actually, never mind' },
+    ];
+
+    expect(toModelMessages(pending)).toEqual([
+      { role: 'user', content: 'where is my order' },
+      { role: 'assistant', content: 'Let me look that up.' },
+      { role: 'user', content: 'actually, never mind' },
+    ]);
+  });
+
+  it('drops the message a silent call leaves behind, rather than sending an empty one', () => {
+    const pending: LlmMessage[] = [
+      { role: 'user', content: 'where is my order' },
+      { role: 'assistant', content: '', toolCallId: 'call_1', toolName: 'lookup_order' },
+    ];
+
+    expect(toModelMessages(pending)).toEqual([{ role: 'user', content: 'where is my order' }]);
   });
 
   it('drops a result whose call a long call trimmed away, rather than failing the turn', () => {

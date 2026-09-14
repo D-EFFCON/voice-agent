@@ -96,6 +96,8 @@ interface TurnRecord {
   spoken: string;
   /** The turn loop is still running, so it will do the finalising itself. */
   generating: boolean;
+  /** The assistant entry carrying a call this turn has not pushed a result for yet. */
+  pendingCall: LlmMessage | undefined;
   /** Invariant 4: the timing line goes out exactly once. */
   timed: boolean;
 }
@@ -175,11 +177,21 @@ export class CallSession implements AgentPort {
     this.armIdle();
     this.log.debug({ event: 'turn.interrupted', turn: this.turn }, 'caller interrupted');
 
+    const record = this.current;
+    if (record === undefined) return;
+
+    /**
+     * Rewritten here rather than left to the aborted turn loop, which only resumes a tick or more
+     * later. Twilio can deliver the interrupt and the caller's next words in one batch of frames,
+     * and the request for those words is built from this.history the moment they arrive: every
+     * word the caller talked over would go to the model as a word they had heard.
+     */
+    this.applyInterrupt(record);
+
     // Twilio interrupts the speaking, not the generating, and the speaking outlasts it: an
     // interrupt routinely arrives after the turn loop has finished and gone. Nothing would come
-    // back for it, and history would go on claiming the caller heard the words they talked over.
-    const record = this.current;
-    if (record !== undefined && !record.generating) this.finalizeTurn(record);
+    // back for it, and the turn's latency would never reach the logs.
+    if (!record.generating) this.finalizeTurn(record);
   }
 
   onDtmf(digit: string): void {
@@ -225,6 +237,14 @@ export class CallSession implements AgentPort {
   private async runTurn(said: string): Promise<void> {
     // A new utterance supersedes whatever was still streaming: barge-in without an interrupt frame.
     this.abort?.abort();
+    /**
+     * The superseded turn may have left a call in history whose result is still being waited on,
+     * and it will not be back to finish the pair before the request below goes out. A provider
+     * refuses a prompt whose call has no result - the SDK raises MissingToolResultsError and the
+     * call dies on the caller's next word - so the call goes now, and the result that arrives
+     * behind it is dropped as the widow it has become.
+     */
+    if (this.current !== undefined) this.dropUnansweredCall(this.current);
     const generation = ++this.generation;
     this.turn += 1;
     const turn = this.turn;
@@ -252,6 +272,7 @@ export class CallSession implements AgentPort {
       assistantOpen: false,
       spoken: '',
       generating: true,
+      pendingCall: undefined,
       timed: false,
     };
     this.current = record;
@@ -260,6 +281,10 @@ export class CallSession implements AgentPort {
     let terminalResult: { tool: ToolDefinition; result: ToolResult; ms: number } | undefined;
 
     for (let step = 1; step <= MAX_STEPS; step += 1) {
+      // Superseded or ending, most likely while the tool above ran. There is nobody left to
+      // speak to, so the next step is not worth a request the answer to which is discarded.
+      if (generation !== this.generation || this.ending) break;
+
       let firstTokenMs: number | undefined;
       let completeMs: number | undefined;
       /** Single-flight: only the first tool call of a step is honoured. */
@@ -323,7 +348,7 @@ export class CallSession implements AgentPort {
       if (tool === undefined) {
         // A model naming a tool that does not exist is a prompt problem, not a caller problem.
         this.log.warn({ event: events.toolCalled, tool: toolCall.name, ok: false }, 'unknown tool');
-        this.pushHistory({
+        this.pushToolResult(record, {
           role: 'tool',
           content: `There is no tool called ${toolCall.name}.`,
           toolCallId: toolCall.toolCallId,
@@ -346,7 +371,7 @@ export class CallSession implements AgentPort {
         );
         timing.tool_name = tool.name;
         timing.tool_ms = 0;
-        this.pushHistory({
+        this.pushToolResult(record, {
           role: 'tool',
           content: `The ${tool.name} tool was called with arguments it cannot use. Check the arguments and try again.`,
           toolCallId: toolCall.toolCallId,
@@ -380,7 +405,7 @@ export class CallSession implements AgentPort {
         break;
       }
 
-      this.pushHistory({
+      this.pushToolResult(record, {
         role: 'tool',
         content: ran.result.modelText,
         toolCallId: toolCall.toolCallId,
@@ -491,6 +516,37 @@ export class CallSession implements AgentPort {
     entry.toolInput = call.input;
     // Closed here: what comes next is the result, not more speech.
     record.assistantOpen = false;
+    record.pendingCall = entry;
+  }
+
+  /** The result for the call this turn made. Pushing it is what completes the pair. */
+  private pushToolResult(record: TurnRecord, message: LlmMessage): void {
+    record.pendingCall = undefined;
+    this.pushHistory(message);
+  }
+
+  /**
+   * The other half of dropUnpairedToolResults, for the half that goes missing the other way round:
+   * a call whose result is still being waited on when the caller speaks again. The two are never
+   * both in flight - this one runs before the next request, and the late result is a widow by the
+   * time it arrives, which trimHistory then drops.
+   *
+   * A turn that spoke before calling keeps its words: the caller heard them.
+   */
+  private dropUnansweredCall(record: TurnRecord): void {
+    const entry = record.pendingCall;
+    if (entry === undefined) return;
+    record.pendingCall = undefined;
+    delete entry.toolCallId;
+    delete entry.toolName;
+    delete entry.toolInput;
+    if (entry.content !== '') return;
+    const at = this.history.indexOf(entry);
+    if (at !== -1) this.history.splice(at, 1);
+    if (record.assistant === entry) {
+      record.assistant = undefined;
+      record.assistantOpen = false;
+    }
   }
 
   /** Returns a failure reason when the stream ended badly, otherwise undefined. */
@@ -507,6 +563,10 @@ export class CallSession implements AgentPort {
     const timing = ctx.record.timing;
     switch (event.type) {
       case 'text-delta': {
+        // The caller talked over this turn and history already says what they heard. What is still
+        // draining out of the aborted stream never reached the ear, so it is neither spoken nor
+        // written: appending it would grow the entry straight back past the truncation.
+        if (timing.interrupted) return undefined;
         const at = this.deps.now();
         ctx.onFirstToken(at);
         this.appendAssistant(ctx.record, event.text);

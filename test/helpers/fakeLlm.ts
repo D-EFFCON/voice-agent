@@ -122,7 +122,10 @@ export class FakeLlmClient implements LlmClient {
 
   async *stream(req: LlmStreamRequest): AsyncIterable<LlmEvent> {
     this.calls.push({
-      messages: [...req.messages],
+      // Copied, not referenced: history is rewritten in place after a request has gone - an
+      // interrupt truncates the words the caller talked over - so only a copy records what was
+      // actually sent.
+      messages: req.messages.map((message) => ({ ...message })),
       tools: [...req.tools],
       timeoutMs: req.timeoutMs,
       stallMs: req.stallMs,

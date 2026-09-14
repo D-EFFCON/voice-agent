@@ -104,7 +104,7 @@ function scripted(answers: ReadableStream<never>[]): MockLanguageModelV4 {
 // --- The wiring --------------------------------------------------------------------------------
 
 const SETTINGS: AgentSettings & ToolSettings = {
-  SYSTEM_PROMPT: 'You answer a complaints line.',
+  SYSTEM_PROMPT: 'You answer the phone for a small business.',
   FALLBACK_MESSAGE: 'Sorry, something went wrong. Let me put you through to someone.',
   HANDOFF_MESSAGE: 'One moment, I will put you through.',
   CLOSING_MESSAGE: 'We have been talking a while, so I will end the call here. Goodbye.',

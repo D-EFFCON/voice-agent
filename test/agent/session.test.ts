@@ -18,7 +18,7 @@ import { captureLogs, type CapturedLogs } from '../helpers/logCapture.js';
 import { createRecentProblems } from '../../src/status/index.js';
 
 const SETTINGS: AgentSettings & ToolSettings = {
-  SYSTEM_PROMPT: 'You answer a complaints line.',
+  SYSTEM_PROMPT: 'You answer the phone for a small business.',
   FALLBACK_MESSAGE: 'Sorry, something went wrong. Let me put you through to someone.',
   HANDOFF_MESSAGE: 'One moment, I will put you through.',
   CLOSING_MESSAGE: 'We have been talking a while, so I will end the call here. Goodbye.',
@@ -105,6 +105,17 @@ const HANDOFF_END: NonNullable<ToolResult['end']> = {
 
 const settle = (ms = 20): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Tool calls in a prompt with no result behind them: what a provider refuses to answer. */
+function unanswered(messages: readonly LlmMessage[]): string[] {
+  const answered = new Set(
+    messages.filter((m) => m.role === 'tool').map((m) => m.toolCallId ?? ''),
+  );
+  return messages
+    .filter((m) => m.role === 'assistant' && m.toolCallId !== undefined)
+    .map((m) => m.toolCallId ?? '')
+    .filter((id) => !answered.has(id));
+}
+
 // --- Invariant 1: exactly one end -------------------------------------------------------------
 
 describe('invariant: exactly one end per session', () => {
@@ -189,6 +200,27 @@ describe('invariant: nothing is spoken for an old generation', () => {
       .history.filter((m: LlmMessage) => m.role === 'assistant');
     expect(assistant.at(-1)?.content).toBe('You owe twenty');
     expect(h.logs.lines().some((l) => l.spoken_prefix === false)).toBe(true);
+  });
+
+  it('trims what the caller heard before the next request can read history', async () => {
+    // Twilio can deliver the interrupt and the caller's next words in one batch of frames, so the
+    // second request is built before the aborted turn loop gets a chance to run again. What the
+    // caller talked over must already be gone from history by then.
+    const h = harness({
+      turns: [
+        [{ text: 'You owe one hundred and twenty dollars' }, { stall: true }],
+        tokens('It is one twenty'),
+      ],
+    });
+
+    h.session.onUtterance('how much do I owe');
+    await settle(25);
+    h.session.onInterrupt('You owe one');
+    h.session.onUtterance('sorry, how much?');
+    await settle(120);
+
+    const sent = h.llm.calls[1]?.messages.filter((m: LlmMessage) => m.role === 'assistant') ?? [];
+    expect(sent.at(-1)?.content).toBe('You owe one');
   });
 
   it('a new utterance supersedes the turn still streaming', async () => {
@@ -598,6 +630,48 @@ describe('tools that misbehave', () => {
     // server that had stopped listening.
     expect(h.out.text()).toContain('right you are');
     expect(h.llm.calls).toHaveLength(3);
+  });
+
+  it('never sends a call whose result has not arrived yet', async () => {
+    // A non-terminal tool is still running when the caller speaks again. The turn that made the
+    // call is superseded, so its result reaches history late or not at all; a provider refuses a
+    // prompt whose call has no result, and that refusal would cost the whole call.
+    let finish: (() => void) | undefined;
+    const slow: ToolDefinition = {
+      name: 'lookup_order',
+      description: 'Takes its time.',
+      inputSchema: z.object({}),
+      terminal: false,
+      run: () =>
+        new Promise<ToolResult>((resolve) => {
+          finish = () => {
+            resolve({ modelText: 'Order 12 shipped on Tuesday.' });
+          };
+        }),
+    };
+    const h = harness({
+      turns: [
+        [{ toolCall: { name: 'lookup_order', input: {} } }],
+        tokens('Still here'),
+        tokens('Yes'),
+      ],
+      tools: [slow],
+    });
+
+    h.session.onUtterance('where is my order');
+    await settle(30);
+    h.session.onUtterance('actually, never mind');
+    await settle(40);
+    finish?.();
+    await settle(40);
+    h.session.onUtterance('one more thing');
+    await settle(40);
+
+    for (const call of h.llm.calls) {
+      expect(unanswered(call.messages)).toEqual([]);
+    }
+    // And the result that arrived behind the dropped call did not settle in history as a widow.
+    expect(h.session.snapshot().history.some((m: LlmMessage) => m.role === 'tool')).toBe(false);
   });
 
   it('never leaves a tool result in history without the call it answers', async () => {

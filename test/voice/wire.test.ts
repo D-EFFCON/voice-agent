@@ -24,7 +24,7 @@ const documentedSetup = {
   callStatus: 'IN-PROGRESS',
   accountSid: 'AC00000000000000000000000000000000',
   applicationSid: null,
-  customParameters: { tenant: 'acme', line: 'complaints' },
+  customParameters: { tenant: 'acme', line: 'support' },
   somethingTwilioAddsLater: { nested: true },
 };
 
@@ -43,7 +43,7 @@ describe('inbound frames', () => {
     expect(result.frame.sessionId).toBe(documentedSetup.sessionId);
     expect(result.frame.from).toBe('+14155550100');
     expect(result.frame.direction).toBe('inbound');
-    expect(result.frame.customParameters).toEqual({ tenant: 'acme', line: 'complaints' });
+    expect(result.frame.customParameters).toEqual({ tenant: 'acme', line: 'support' });
     expect(result.frame).not.toHaveProperty('somethingTwilioAddsLater');
     // null in a recorded-only field is tolerated and read as absent.
     expect(result.frame.applicationSid).toBeUndefined();

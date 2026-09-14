@@ -132,7 +132,7 @@ If your webhook is slow, broken or switched off, **the caller still gets transfe
 
 ## Changing how the agent behaves
 
-**What it says and how it acts** is one variable: `SYSTEM_PROMPT`. It ships with a complaints-line prompt for a made-up company, so you will want to change it. Write it as instructions to a person answering your phone. Keep it short, tell it to keep replies to a sentence or two, and tell it when to hand over.
+**What it says and how it acts** is one variable: `SYSTEM_PROMPT`. It ships with a deliberately generic starter prompt for a made-up company — it answers, works out why the caller rang, and hands over — so this is the first thing to change for whatever your line does. Write it as instructions to a person answering your phone. Keep it short, tell it to keep replies to a sentence or two, and tell it when to hand over.
 
 **Which AI it uses** is `LLM_PROVIDER` plus that provider's key. The default is `openai` with the `gpt-4o-mini` model, chosen because it starts talking fastest. Newer models think before they answer, which on a phone call sounds like a dead line. Set `LLM_MODEL` if you want a different one.
 
@@ -245,7 +245,7 @@ pnpm dev
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `SYSTEM_PROMPT` | no | the bundled complaints-line prompt (src/config/defaults.ts) | Instructions for the AI, including its name and your business name. Multi-line values are fine. |
+| `SYSTEM_PROMPT` | no | the bundled starter prompt (src/config/defaults.ts) | Instructions for the AI, including its name and your business name. Multi-line values are fine. |
 | `FALLBACK_MESSAGE` | no | `Sorry, I am having trouble right now. Let me put you through to a person.` | Spoken when the model fails or times out, before the caller goes to a person. |
 | `HANDOFF_MESSAGE` | no | `One moment while I put you through to the team.` | Spoken when the AI hands the caller to a person and has not already said so. |
 | `CLOSING_MESSAGE` | no | `We have reached the time limit for this call. Thank you for calling. Goodbye.` | Spoken when a call reaches MAX_CALL_SECONDS, before it ends. |
