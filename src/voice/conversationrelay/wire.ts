@@ -4,7 +4,7 @@
  * Inbound frames are lenient: only the fields the server acts on are required, unknown fields
  * are dropped, and unknown types are reported so the link can log and ignore them. Outbound
  * frames are strict so tests catch a misspelt key before Twilio does. Field names follow
- * Twilio's ConversationRelay WebSocket message reference (checked 2026-09-09).
+ * Twilio's ConversationRelay WebSocket message reference (checked 2026-09-14).
  */
 import { z } from 'zod';
 
@@ -45,8 +45,15 @@ export const promptFrame = z.object({
   type: z.literal('prompt'),
   voicePrompt: z.string().transform((text) => text.slice(0, UTTERANCE_MAX_CHARS)),
   lang: z.string().optional(),
-  /** Acted on only when true. */
-  last: z.boolean(),
+  /**
+   * Acted on only when true. A missing or non-boolean value reads as true rather than failing the
+   * frame. `last` is false only when partialPrompts is on in the TwiML, which this server never
+   * asks for, so every prompt it sees in practice is a final one. Failing instead would make the
+   * frame malformed, and a malformed frame is logged and dropped - which for a prompt means the
+   * caller's sentence goes unanswered and they hear silence. Answering an unlabelled prompt is
+   * the safer of the two mistakes.
+   */
+  last: z.boolean().catch(true),
 });
 
 export const interruptFrame = z.object({
