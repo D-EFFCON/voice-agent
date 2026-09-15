@@ -13,6 +13,12 @@ import { THINKING_BUDGETS, type ReasoningPlan } from '../reasoning.js';
  * 'high' | 'xhigh' | 'max' (@ai-sdk/openai 4.0.65), so our four map onto four of its seven.
  * 'none' is not accepted by every reasoning model — the newest ones answer an effort of 'none'
  * with an HTTP 400 — so off is a fast reply on most models and a clear failure on the rest.
+ *
+ * LLM_SPEED maps onto service_tier, whose union is wider than our two words ('default' | 'auto' |
+ * 'flex' | 'priority' | 'fast' | 'ultrafast', @ai-sdk/openai 4.0.65). standard sends 'default'
+ * rather than 'auto' so that pinning standard really pins it instead of leaving the account's own
+ * tier to decide. An unsupported model does not fail: the SDK strips service_tier and warns, so
+ * fast on gpt-4o-mini is standard speed at standard cost and a warning on the self-test.
  */
 export const openai = defineSdkProvider({
   id: 'openai',
@@ -25,4 +31,5 @@ export const openai = defineSdkProvider({
     level === 'off'
       ? { options: { reasoningEffort: 'none' } }
       : { options: { reasoningEffort: level }, extraOutputTokens: THINKING_BUDGETS[level] },
+  speed: (level) => ({ serviceTier: level === 'fast' ? 'fast' : 'default' }),
 });

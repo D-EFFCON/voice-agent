@@ -6,7 +6,7 @@
  * receives SYSTEM_PROMPT through its settings slice, always as a string.
  */
 
-import type { ReasoningSetting } from '../llm/registry.js';
+import type { ReasoningSetting, SpeedSetting } from '../llm/registry.js';
 
 /**
  * A deliberately generic starter: it answers, finds out why the caller rang, and hands over.
@@ -29,6 +29,13 @@ export const DEFAULT_SYSTEM_PROMPT = [
  * to not thinking is the deployer's decision, not an upgrade's.
  */
 export const DEFAULT_REASONING_EFFORT: ReasoningSetting = 'default';
+
+/**
+ * Unset leaves every provider's own tier alone, so adding this variable changed no existing
+ * deployment's behaviour or bill. It stays that way on purpose: the fast tier costs about twice
+ * the standard rate, and no upgrade should start spending a deployer's money for them.
+ */
+export const DEFAULT_SPEED: SpeedSetting = 'default';
 
 export const DEFAULT_FALLBACK_MESSAGE =
   'Sorry, I am having trouble right now. Let me put you through to a person.';

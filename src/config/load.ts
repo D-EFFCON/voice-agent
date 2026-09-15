@@ -12,6 +12,7 @@ import {
   DEFAULT_LOG_LEVEL,
   DEFAULT_REASONING_EFFORT,
   DEFAULT_SIGNATURE_MODE,
+  DEFAULT_SPEED,
   DEFAULT_SYSTEM_PROMPT,
   RANGES,
   SECRET_SCRUB_MIN_LENGTH,
@@ -131,6 +132,7 @@ function load(env: Env, catalogs: Catalogs): LoadedConfig {
   }
   const LLM_TIMEOUT_MS = read(schema.LLM_TIMEOUT_MS);
   const LLM_REASONING_EFFORT = read(schema.LLM_REASONING_EFFORT);
+  const LLM_SPEED = read(schema.LLM_SPEED);
 
   // Prompt and spoken messages
   const SYSTEM_PROMPT = read(schema.SYSTEM_PROMPT);
@@ -189,6 +191,7 @@ function load(env: Env, catalogs: Catalogs): LoadedConfig {
     LLM_MODEL,
     LLM_TIMEOUT_MS,
     LLM_REASONING_EFFORT,
+    LLM_SPEED,
     llmApiKey,
     SYSTEM_PROMPT,
     FALLBACK_MESSAGE,
@@ -255,6 +258,7 @@ function fallback(env: Env): LoadedConfig {
     LLM_MODEL: '',
     LLM_TIMEOUT_MS: RANGES.LLM_TIMEOUT_MS.fallback,
     LLM_REASONING_EFFORT: DEFAULT_REASONING_EFFORT,
+    LLM_SPEED: DEFAULT_SPEED,
     llmApiKey: null,
     SYSTEM_PROMPT: DEFAULT_SYSTEM_PROMPT,
     FALLBACK_MESSAGE: DEFAULT_FALLBACK_MESSAGE,

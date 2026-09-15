@@ -9,6 +9,7 @@
 import type { ZodType } from 'zod';
 
 import type { ReasoningLevel } from './reasoning.js';
+import type { SpeedLevel } from './speed.js';
 
 export type LlmRole = 'system' | 'user' | 'assistant' | 'tool';
 
@@ -75,6 +76,12 @@ export interface LlmProbeResult {
   ok: boolean;
   ms: number;
   error?: LlmError;
+  /**
+   * Settings the model accepted the request without honouring, one sentence each. A probe can be
+   * ok and still carry these: the key and the model work, but something the deployer asked for is
+   * not taking effect. Absent when there is nothing to say.
+   */
+  warnings?: readonly string[];
 }
 
 export interface LlmClient {
@@ -108,8 +115,14 @@ export interface LlmProviderModule {
   /** Used when LLM_MODEL is unset. A fast model: first text within about a second matters. */
   defaultModel: string;
   /**
-   * reasoning is the LLM_REASONING_EFFORT level, or undefined for "leave the provider alone".
-   * A provider that cannot be told how hard to think ignores it.
+   * reasoning is the LLM_REASONING_EFFORT level and speed the LLM_SPEED level; undefined means
+   * "leave the provider alone" for either. A provider that cannot be told how hard to think, or
+   * sells no faster tier, ignores the one it has no use for.
    */
-  create(o: { model: string; apiKey: string; reasoning?: ReasoningLevel }): LlmClient;
+  create(o: {
+    model: string;
+    apiKey: string;
+    reasoning?: ReasoningLevel;
+    speed?: SpeedLevel;
+  }): LlmClient;
 }

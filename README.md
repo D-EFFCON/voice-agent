@@ -138,6 +138,8 @@ If your webhook is slow, broken or switched off, **the caller still gets transfe
 
 **If you do pick a newer model,** set `LLM_REASONING_EFFORT=off` with it. That is the switch that tells a thinking model to answer straight away instead of pausing first, and it is the difference between a model you can use on a phone and one you cannot. It works on all five providers — each one spells the setting differently and the template translates for you. Leave it unset and each model keeps whatever it does by default, which for Google's `gemini-2.5-flash` means it thinks before every reply. Two warnings: a handful of the very newest reasoning models refuse `off` and will return an error instead, and turning it up (`low`, `medium`, `high`) buys thinking time your caller spends listening to silence.
 
+**If a bigger model is worth paying for,** `LLM_SPEED=fast` buys the provider's paid faster tier, and the template translates it for whichever provider you are on. Read the price first: it costs about twice the standard rate for the same model. It is not a saving — it exists to make a large model quick enough to hold a conversation, not to make a small one cheaper, so on the `gpt-4o-mini` this template starts with there is nothing to buy. It also only exists on the larger models: OpenAI sells it on its newest large ones, Anthropic on its largest two, and Google, Mistral and Groq not at all. Ask for it on a model that does not have it and nothing breaks — you get standard speed at standard cost, and the self-test tells you the setting was ignored. And note what it does not do: it makes words come out faster once the model starts talking, not the first one arrive sooner, so it is not the fix for an agent that is slow off the mark.
+
 **The spoken lines** for handing over, apologising and closing a long call are `HANDOFF_MESSAGE`, `FALLBACK_MESSAGE` and `CLOSING_MESSAGE`.
 
 Every setting is in the table at the bottom of this page.
@@ -243,6 +245,7 @@ pnpm dev
 | `GROQ_API_KEY` (secret) | when LLM_PROVIDER is groq |  | API key for Groq. Create one at console.groq.com under API keys. |
 | `LLM_TIMEOUT_MS` | no | `20000` | How long to wait for the model, in milliseconds: for the whole reply and for any gap between words. On timeout the caller hears FALLBACK_MESSAGE and goes to a person. |
 | `LLM_REASONING_EFFORT` | no | `default` | How hard the model thinks before it answers. Thinking costs seconds of silence the caller hears, so off is the usual choice for a phone line; default leaves the model's own setting alone. Ignored by models that cannot think, and a few of the newest reasoning models reject off outright. Values: default, off, low, medium, high. |
+| `LLM_SPEED` | no | `default` | Which speed tier to buy from the provider. fast is the provider's paid faster tier, which costs about twice the standard rate and exists only on their larger models; default leaves the provider's own tier alone. Ignored by providers that sell no faster tier, and a model without one runs at standard speed and says so on the self-test. Values: default, standard, fast. |
 
 ### Prompt and spoken messages
 
