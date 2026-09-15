@@ -30,12 +30,14 @@ import {
   streamText,
   tool,
   type AssistantContent,
+  type CallWarning,
   type LanguageModel,
   type ModelMessage,
   type ToolSet,
 } from 'ai';
 import { classifyFailure, type FailureContext, type RawFailure } from './errors.js';
 import type { JsonValue, ReasoningLevel, ReasoningPlan } from './reasoning.js';
+import type { SpeedLevel } from './speed.js';
 import type {
   LlmClient,
   LlmError,
@@ -93,6 +95,43 @@ export interface AiSdkClientOptions {
 
 /** How long probe() waits. Independent of LLM_TIMEOUT_MS: the page must answer while you watch. */
 export const PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * SDK setting name -> the variable a deployer set to get it. A warning names the SDK's own field,
+ * which means nothing to someone who only ever typed LLM_SPEED into Railway.
+ */
+const SETTING_SOURCE: Readonly<Record<string, string>> = {
+  serviceTier: 'LLM_SPEED',
+  speed: 'LLM_SPEED',
+  reasoningEffort: 'LLM_REASONING_EFFORT',
+  thinking: 'LLM_REASONING_EFFORT',
+  thinkingConfig: 'LLM_REASONING_EFFORT',
+};
+
+/**
+ * What the model quietly refused, as sentences the status page can print.
+ *
+ * The AI SDK does not fail a request that asks for something the model does not have: it removes
+ * the setting, reports a warning and sends the rest. Without this a deployer who set
+ * LLM_SPEED=fast on a model with no fast tier would get a green self-test, standard speed and
+ * standard billing, with nothing anywhere saying the setting never took. Never throws — a
+ * self-test must not fail because the warnings could not be read.
+ */
+async function ignoredSettings(
+  warnings: PromiseLike<CallWarning[] | undefined>,
+): Promise<string[]> {
+  try {
+    return ((await warnings) ?? [])
+      .filter((w) => w.type === 'unsupported')
+      .map((w) => {
+        const source = SETTING_SOURCE[w.feature] ?? w.feature;
+        const why = w.details === undefined ? '' : ` ${w.details}`;
+        return `${source} was ignored: this model does not support it.${why}`;
+      });
+  } catch {
+    return [];
+  }
+}
 
 /** Model output is capped so one runaway reply cannot hold a call open to MAX_CALL_SECONDS. */
 const MAX_OUTPUT_TOKENS = 400;
@@ -184,7 +223,13 @@ export function createClientForModel(options: ClientForModelOptions): LlmClient 
         // One token is proof enough that the key and the model work; stop paying for the rest.
         for await (const part of result.fullStream) {
           if (part.type === 'text-delta' && part.text !== '') {
-            return { ok: true, ms: Date.now() - started };
+            // Settled by the time any text arrives: warnings come from preparing the request.
+            const ignored = await ignoredSettings(result.warnings);
+            return {
+              ok: true,
+              ms: Date.now() - started,
+              ...(ignored.length === 0 ? {} : { warnings: ignored }),
+            };
           }
           if (part.type === 'error') {
             return {
@@ -241,6 +286,12 @@ export interface SdkProviderSpec {
    * Omitted by a provider that cannot be told how hard to think; the setting is then ignored.
    */
   reasoning?: (level: ReasoningLevel) => ReasoningPlan;
+  /**
+   * Translates the shared LLM_SPEED vocabulary into this provider's own spelling. Omitted by a
+   * provider that sells no faster tier; the setting is then ignored. Unlike reasoning this buys
+   * no thinking tokens, so it never moves the output cap.
+   */
+  speed?: (level: SpeedLevel) => Record<string, JsonValue>;
 }
 
 /** Builds the registry entry. Every advertised provider in v1 goes through this. */
@@ -252,9 +303,10 @@ export function defineSdkProvider(spec: SdkProviderSpec): LlmProviderModule {
     keyEnv: spec.keyEnv,
     keyDescription: spec.keyDescription,
     defaultModel: spec.defaultModel,
-    create: ({ model, apiKey, reasoning }) => {
+    create: ({ model, apiKey, reasoning, speed }) => {
       const plan = reasoning === undefined ? undefined : spec.reasoning?.(reasoning);
-      const body = { ...spec.providerOptions, ...plan?.options };
+      const tier = speed === undefined ? undefined : spec.speed?.(speed);
+      const body = { ...spec.providerOptions, ...plan?.options, ...tier };
       return createAiSdkClient({
         sdk: spec.sdk,
         provider: spec.id,

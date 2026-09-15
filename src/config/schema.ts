@@ -8,8 +8,10 @@
  */
 import {
   REASONING_SETTINGS,
+  SPEED_SETTINGS,
   type LlmCatalogEntry,
   type ReasoningSetting,
+  type SpeedSetting,
 } from '../llm/registry.js';
 import type { SignatureMode } from '../security/types.js';
 import type { AutomationPreset } from '../tools/types.js';
@@ -22,6 +24,7 @@ import {
   DEFAULT_LOG_LEVEL,
   DEFAULT_REASONING_EFFORT,
   DEFAULT_SIGNATURE_MODE,
+  DEFAULT_SPEED,
   DEFAULT_SYSTEM_PROMPT,
   RANGES,
   STATUS_TOKEN_MIN_LENGTH,
@@ -73,6 +76,7 @@ export interface EnvSchema {
   providerKeys: readonly ProviderKeySpec[];
   LLM_TIMEOUT_MS: DefaultedSpec<number>;
   LLM_REASONING_EFFORT: DefaultedSpec<ReasoningSetting>;
+  LLM_SPEED: DefaultedSpec<SpeedSetting>;
   SYSTEM_PROMPT: DefaultedSpec<string>;
   FALLBACK_MESSAGE: DefaultedSpec<string>;
   HANDOFF_MESSAGE: DefaultedSpec<string>;
@@ -289,6 +293,18 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     parse: enumOf('LLM_REASONING_EFFORT', REASONING_SETTINGS, DEFAULT_REASONING_EFFORT),
   };
 
+  const LLM_SPEED: DefaultedSpec<SpeedSetting> = {
+    key: 'LLM_SPEED',
+    group: 'LLM',
+    description:
+      "Which speed tier to buy from the provider. fast is the provider's paid faster tier, which costs about twice the standard rate and exists only on their larger models; default leaves the provider's own tier alone. Ignored by providers that sell no faster tier, and a model without one runs at standard speed and says so on the self-test.",
+    required: false,
+    defaultValue: DEFAULT_SPEED,
+    secret: false,
+    validValues: SPEED_SETTINGS,
+    parse: enumOf('LLM_SPEED', SPEED_SETTINGS, DEFAULT_SPEED),
+  };
+
   const SYSTEM_PROMPT: DefaultedSpec<string> = {
     ...spoken(
       'SYSTEM_PROMPT',
@@ -436,6 +452,7 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     ...providerKeys,
     LLM_TIMEOUT_MS,
     LLM_REASONING_EFFORT,
+    LLM_SPEED,
     SYSTEM_PROMPT,
     FALLBACK_MESSAGE,
     HANDOFF_MESSAGE,
@@ -468,6 +485,7 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     providerKeys,
     LLM_TIMEOUT_MS,
     LLM_REASONING_EFFORT,
+    LLM_SPEED,
     SYSTEM_PROMPT,
     FALLBACK_MESSAGE,
     HANDOFF_MESSAGE,
