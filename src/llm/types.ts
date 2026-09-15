@@ -8,6 +8,8 @@
  */
 import type { ZodType } from 'zod';
 
+import type { ReasoningLevel } from './reasoning.js';
+
 export type LlmRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface LlmMessage {
@@ -105,5 +107,9 @@ export interface LlmProviderModule {
   keyDescription: string;
   /** Used when LLM_MODEL is unset. A fast model: first text within about a second matters. */
   defaultModel: string;
-  create(o: { model: string; apiKey: string }): LlmClient;
+  /**
+   * reasoning is the LLM_REASONING_EFFORT level, or undefined for "leave the provider alone".
+   * A provider that cannot be told how hard to think ignores it.
+   */
+  create(o: { model: string; apiKey: string; reasoning?: ReasoningLevel }): LlmClient;
 }

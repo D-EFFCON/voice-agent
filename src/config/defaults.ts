@@ -6,6 +6,8 @@
  * receives SYSTEM_PROMPT through its settings slice, always as a string.
  */
 
+import type { ReasoningSetting } from '../llm/registry.js';
+
 /**
  * A deliberately generic starter: it answers, finds out why the caller rang, and hands over.
  * It is not written for any particular line of business, because the template is not either.
@@ -19,6 +21,14 @@ export const DEFAULT_SYSTEM_PROMPT = [
   'When the caller has what they came for and nothing else to raise, say goodbye and end the call.',
   'Never invent policies, prices or promises. If you do not know, say so and offer the team.',
 ].join('\n');
+
+/**
+ * Unset leaves every provider's own reasoning setting alone, so adding this variable changed no
+ * existing deployment's behaviour. 'off' is the one most voice deployments want — see the README
+ * row — but it is not the default, because switching a running deployment's model from thinking
+ * to not thinking is the deployer's decision, not an upgrade's.
+ */
+export const DEFAULT_REASONING_EFFORT: ReasoningSetting = 'default';
 
 export const DEFAULT_FALLBACK_MESSAGE =
   'Sorry, I am having trouble right now. Let me put you through to a person.';
