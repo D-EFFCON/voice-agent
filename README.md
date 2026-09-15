@@ -136,6 +136,8 @@ If your webhook is slow, broken or switched off, **the caller still gets transfe
 
 **Which AI it uses** is `LLM_PROVIDER` plus that provider's key. The default is `openai` with the `gpt-4o-mini` model, chosen because it starts talking fastest. Newer models think before they answer, which on a phone call sounds like a dead line. Set `LLM_MODEL` if you want a different one.
 
+**If you do pick a newer model,** set `LLM_REASONING_EFFORT=off` with it. That is the switch that tells a thinking model to answer straight away instead of pausing first, and it is the difference between a model you can use on a phone and one you cannot. It works on all five providers — each one spells the setting differently and the template translates for you. Leave it unset and each model keeps whatever it does by default, which for Google's `gemini-2.5-flash` means it thinks before every reply. Two warnings: a handful of the very newest reasoning models refuse `off` and will return an error instead, and turning it up (`low`, `medium`, `high`) buys thinking time your caller spends listening to silence.
+
 **The spoken lines** for handing over, apologising and closing a long call are `HANDOFF_MESSAGE`, `FALLBACK_MESSAGE` and `CLOSING_MESSAGE`.
 
 Every setting is in the table at the bottom of this page.
@@ -240,6 +242,7 @@ pnpm dev
 | `MISTRAL_API_KEY` (secret) | when LLM_PROVIDER is mistral |  | API key for Mistral. Create one at console.mistral.ai under API keys. |
 | `GROQ_API_KEY` (secret) | when LLM_PROVIDER is groq |  | API key for Groq. Create one at console.groq.com under API keys. |
 | `LLM_TIMEOUT_MS` | no | `20000` | How long to wait for the model, in milliseconds: for the whole reply and for any gap between words. On timeout the caller hears FALLBACK_MESSAGE and goes to a person. |
+| `LLM_REASONING_EFFORT` | no | `default` | How hard the model thinks before it answers. Thinking costs seconds of silence the caller hears, so off is the usual choice for a phone line; default leaves the model's own setting alone. Ignored by models that cannot think, and a few of the newest reasoning models reject off outright. Values: default, off, low, medium, high. |
 
 ### Prompt and spoken messages
 

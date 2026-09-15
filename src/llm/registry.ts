@@ -9,7 +9,16 @@ import { google } from './providers/google.js';
 import { groq } from './providers/groq.js';
 import { mistral } from './providers/mistral.js';
 import { openai } from './providers/openai.js';
+import { REASONING_SETTINGS, type ReasoningSetting } from './reasoning.js';
 import type { LlmClient, LlmProviderModule } from './types.js';
+
+/**
+ * Re-exported because config reaches src/llm through this file only (test/arch/imports.test.ts).
+ * LLM_REASONING_EFFORT's valid values therefore follow the vocabulary, the same way LLM_PROVIDER's
+ * follow llmCatalog.
+ */
+export { REASONING_SETTINGS };
+export type { ReasoningSetting };
 
 export const providers: readonly LlmProviderModule[] = [
   openai,
@@ -56,6 +65,8 @@ export function createLlmClient(o: {
   provider: string;
   model?: string;
   apiKey: string;
+  /** LLM_REASONING_EFFORT; 'default' and undefined both leave the provider's own setting alone. */
+  reasoning?: ReasoningSetting;
 }): LlmClient {
   const provider = providers.find((p) => p.id === o.provider);
   if (!provider) {
@@ -63,5 +74,11 @@ export function createLlmClient(o: {
   }
   const requested = o.model?.trim() ?? '';
   const model = requested === '' ? provider.defaultModel : requested;
-  return provider.create({ model, apiKey: o.apiKey });
+  const reasoning =
+    o.reasoning === undefined || o.reasoning === 'default' ? undefined : o.reasoning;
+  return provider.create({
+    model,
+    apiKey: o.apiKey,
+    ...(reasoning === undefined ? {} : { reasoning }),
+  });
 }

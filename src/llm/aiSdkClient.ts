@@ -35,6 +35,7 @@ import {
   type ToolSet,
 } from 'ai';
 import { classifyFailure, type FailureContext, type RawFailure } from './errors.js';
+import type { JsonValue, ReasoningLevel, ReasoningPlan } from './reasoning.js';
 import type {
   LlmClient,
   LlmError,
@@ -84,6 +85,10 @@ export interface AiSdkClientOptions {
   isDefaultModel: boolean;
   /** For an OpenAI-compatible endpoint that is not OpenAI. */
   baseURL?: string;
+  /** Passed to streamText as-is; already namespaced by SDK. Undefined sends nothing. */
+  providerOptions?: Record<string, Record<string, JsonValue>>;
+  /** Room added to the output cap for thinking tokens, which are charged against it. */
+  extraOutputTokens?: number;
 }
 
 /** How long probe() waits. Independent of LLM_TIMEOUT_MS: the page must answer while you watch. */
@@ -104,6 +109,8 @@ export interface ClientForModelOptions {
   model: string;
   keyEnv: string | null;
   isDefaultModel: boolean;
+  providerOptions?: Record<string, Record<string, JsonValue>>;
+  extraOutputTokens?: number;
 }
 
 export function createAiSdkClient(options: AiSdkClientOptions): LlmClient {
@@ -119,11 +126,19 @@ export function createAiSdkClient(options: AiSdkClientOptions): LlmClient {
     model: options.model,
     keyEnv: options.keyEnv,
     isDefaultModel: options.isDefaultModel,
+    ...(options.providerOptions === undefined ? {} : { providerOptions: options.providerOptions }),
+    ...(options.extraOutputTokens === undefined
+      ? {}
+      : { extraOutputTokens: options.extraOutputTokens }),
   });
 }
 
 export function createClientForModel(options: ClientForModelOptions): LlmClient {
   const { provider, model, languageModel } = options;
+  const providerOptions = options.providerOptions;
+  // Thinking is charged against the output cap, so buying thinking has to buy room for it too:
+  // left at MAX_OUTPUT_TOKENS a thinking model would spend the whole cap and say nothing.
+  const extraOutputTokens = options.extraOutputTokens ?? 0;
   const failureContext: FailureContext = {
     provider,
     keyEnv: options.keyEnv,
@@ -140,7 +155,13 @@ export function createClientForModel(options: ClientForModelOptions): LlmClient 
     model,
 
     stream(req: LlmStreamRequest): AsyncIterable<LlmEvent> {
-      return runStream({ languageModel, req, toError });
+      return runStream({
+        languageModel,
+        req,
+        toError,
+        ...(providerOptions === undefined ? {} : { providerOptions }),
+        maxOutputTokens: MAX_OUTPUT_TOKENS + extraOutputTokens,
+      });
     },
 
     async probe(): Promise<LlmProbeResult> {
@@ -154,7 +175,11 @@ export function createClientForModel(options: ClientForModelOptions): LlmClient 
           allowSystemInMessages: true,
           abortSignal: controller.signal,
           maxRetries: 0,
-          maxOutputTokens: 8,
+          // The probe answers the deployer's "does this key and model work", so it runs with the
+          // same reasoning settings a real call would: a configuration that fails on the phone
+          // should fail on the self-test page too, not pass there and surprise a caller.
+          ...(providerOptions === undefined ? {} : { providerOptions }),
+          maxOutputTokens: 8 + extraOutputTokens,
         });
         // One token is proof enough that the key and the model work; stop paying for the rest.
         for await (const part of result.fullStream) {
@@ -205,6 +230,17 @@ export interface SdkProviderSpec {
   defaultModel: string;
   /** For an OpenAI-compatible endpoint that is not OpenAI itself. */
   baseURL?: string;
+  /**
+   * Sent on every call whatever the reasoning setting, under this provider's SDK namespace.
+   * For settings that are about safety rather than preference — groq's reasoningFormat keeps the
+   * model's thinking out of the text we speak — so they must not depend on a deployer opting in.
+   */
+  providerOptions?: Record<string, JsonValue>;
+  /**
+   * Translates the shared LLM_REASONING_EFFORT vocabulary into this provider's own spelling.
+   * Omitted by a provider that cannot be told how hard to think; the setting is then ignored.
+   */
+  reasoning?: (level: ReasoningLevel) => ReasoningPlan;
 }
 
 /** Builds the registry entry. Every advertised provider in v1 goes through this. */
@@ -216,8 +252,10 @@ export function defineSdkProvider(spec: SdkProviderSpec): LlmProviderModule {
     keyEnv: spec.keyEnv,
     keyDescription: spec.keyDescription,
     defaultModel: spec.defaultModel,
-    create: ({ model, apiKey }) =>
-      createAiSdkClient({
+    create: ({ model, apiKey, reasoning }) => {
+      const plan = reasoning === undefined ? undefined : spec.reasoning?.(reasoning);
+      const body = { ...spec.providerOptions, ...plan?.options };
+      return createAiSdkClient({
         sdk: spec.sdk,
         provider: spec.id,
         model,
@@ -225,7 +263,14 @@ export function defineSdkProvider(spec: SdkProviderSpec): LlmProviderModule {
         keyEnv: spec.keyEnv,
         isDefaultModel: model === spec.defaultModel,
         ...(spec.baseURL === undefined ? {} : { baseURL: spec.baseURL }),
-      }),
+        // Namespaced by SDK, not by provider id: an OpenAI-compatible endpoint with its own id
+        // still speaks the openai namespace, and a wrong key here is silently ignored.
+        ...(Object.keys(body).length === 0 ? {} : { providerOptions: { [spec.sdk]: body } }),
+        ...(plan?.extraOutputTokens === undefined
+          ? {}
+          : { extraOutputTokens: plan.extraOutputTokens }),
+      });
+    },
   };
 }
 
@@ -235,6 +280,8 @@ interface StreamDeps {
   languageModel: LanguageModel;
   req: LlmStreamRequest;
   toError: (raw: RawFailure, timeoutMs: number) => LlmError;
+  providerOptions?: Record<string, Record<string, JsonValue>>;
+  maxOutputTokens: number;
 }
 
 /**
@@ -302,7 +349,8 @@ async function* runStream(deps: StreamDeps): AsyncIterable<LlmEvent> {
       allowSystemInMessages: true,
       abortSignal: own.signal,
       maxRetries: 0,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      ...(deps.providerOptions === undefined ? {} : { providerOptions: deps.providerOptions }),
+      maxOutputTokens: deps.maxOutputTokens,
     });
 
     /*

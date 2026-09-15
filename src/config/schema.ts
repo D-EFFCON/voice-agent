@@ -6,7 +6,11 @@
  * Adding a provider or a preset therefore needs no edit here: LLM_PROVIDER's values, the
  * <PROVIDER>_API_KEY variables and AUTOMATION_PROVIDER's values follow the registries.
  */
-import type { LlmCatalogEntry } from '../llm/registry.js';
+import {
+  REASONING_SETTINGS,
+  type LlmCatalogEntry,
+  type ReasoningSetting,
+} from '../llm/registry.js';
 import type { SignatureMode } from '../security/types.js';
 import type { AutomationPreset } from '../tools/types.js';
 import {
@@ -16,6 +20,7 @@ import {
   DEFAULT_HANDOFF_INCLUDE_TRANSCRIPT,
   DEFAULT_HANDOFF_MESSAGE,
   DEFAULT_LOG_LEVEL,
+  DEFAULT_REASONING_EFFORT,
   DEFAULT_SIGNATURE_MODE,
   DEFAULT_SYSTEM_PROMPT,
   RANGES,
@@ -67,6 +72,7 @@ export interface EnvSchema {
   LLM_MODEL: EnvSpec<string>;
   providerKeys: readonly ProviderKeySpec[];
   LLM_TIMEOUT_MS: DefaultedSpec<number>;
+  LLM_REASONING_EFFORT: DefaultedSpec<ReasoningSetting>;
   SYSTEM_PROMPT: DefaultedSpec<string>;
   FALLBACK_MESSAGE: DefaultedSpec<string>;
   HANDOFF_MESSAGE: DefaultedSpec<string>;
@@ -271,6 +277,18 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     RANGES.LLM_TIMEOUT_MS,
   );
 
+  const LLM_REASONING_EFFORT: DefaultedSpec<ReasoningSetting> = {
+    key: 'LLM_REASONING_EFFORT',
+    group: 'LLM',
+    description:
+      "How hard the model thinks before it answers. Thinking costs seconds of silence the caller hears, so off is the usual choice for a phone line; default leaves the model's own setting alone. Ignored by models that cannot think, and a few of the newest reasoning models reject off outright.",
+    required: false,
+    defaultValue: DEFAULT_REASONING_EFFORT,
+    secret: false,
+    validValues: REASONING_SETTINGS,
+    parse: enumOf('LLM_REASONING_EFFORT', REASONING_SETTINGS, DEFAULT_REASONING_EFFORT),
+  };
+
   const SYSTEM_PROMPT: DefaultedSpec<string> = {
     ...spoken(
       'SYSTEM_PROMPT',
@@ -417,6 +435,7 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     LLM_MODEL,
     ...providerKeys,
     LLM_TIMEOUT_MS,
+    LLM_REASONING_EFFORT,
     SYSTEM_PROMPT,
     FALLBACK_MESSAGE,
     HANDOFF_MESSAGE,
@@ -448,6 +467,7 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     LLM_MODEL,
     providerKeys,
     LLM_TIMEOUT_MS,
+    LLM_REASONING_EFFORT,
     SYSTEM_PROMPT,
     FALLBACK_MESSAGE,
     HANDOFF_MESSAGE,
