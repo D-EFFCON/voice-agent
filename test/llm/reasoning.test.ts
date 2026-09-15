@@ -55,7 +55,10 @@ async function callWith(
   recorded.length = 0;
   const client = createLlmClient({
     provider,
-    apiKey: 'sk-test-key-0123456789',
+    // Deliberately dull, and matching test/llm/registry.test.ts: gitleaks' generic-api-key rule
+    // fires on a high-entropy literal assigned straight to apiKey. The value is never read here
+    // anyway, because streamText is mocked.
+    apiKey: 'test-key',
     ...(reasoning === undefined ? {} : { reasoning }),
   });
   for await (const event of client.stream({
