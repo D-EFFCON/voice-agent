@@ -8,12 +8,19 @@
  */
 import type { ZodType } from 'zod';
 
+import type { ReasoningLevel } from './reasoning.js';
+
 export type LlmRole = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface LlmMessage {
   role: LlmRole;
   content: string;
-  /** Set on 'tool' messages: which call this result answers. */
+  /**
+   * The tool call this message belongs to. On an 'assistant' message it is the call the model made,
+   * with toolInput carrying the arguments; on the 'tool' message after it, the call whose result
+   * this is. Both halves travel together, because a provider refuses a result whose call it cannot
+   * see. (ADR 0003, the queued comment-only seam revision.)
+   */
   toolCallId?: string;
   toolName?: string;
   toolInput?: unknown;
@@ -100,5 +107,9 @@ export interface LlmProviderModule {
   keyDescription: string;
   /** Used when LLM_MODEL is unset. A fast model: first text within about a second matters. */
   defaultModel: string;
-  create(o: { model: string; apiKey: string }): LlmClient;
+  /**
+   * reasoning is the LLM_REASONING_EFFORT level, or undefined for "leave the provider alone".
+   * A provider that cannot be told how hard to think ignores it.
+   */
+  create(o: { model: string; apiKey: string; reasoning?: ReasoningLevel }): LlmClient;
 }

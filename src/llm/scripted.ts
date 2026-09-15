@@ -178,7 +178,7 @@ async function* runScript(req: LlmStreamRequest, delayMs: number): AsyncIterable
 function scriptedReply(said: string): string {
   if (said === '') return 'Hello, thanks for calling. How can I help?';
   if (said.includes('hello') || said.includes('hi ')) return 'Hello, how can I help you today?';
-  if (said.includes('complaint') || said.includes('problem')) {
+  if (said.includes('problem') || said.includes('issue')) {
     return 'I am sorry to hear that. Can you tell me what happened, and when?';
   }
   return 'Thanks, I have made a note of that. Is there anything else I can help with?';

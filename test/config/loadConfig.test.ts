@@ -300,6 +300,30 @@ const cases: Case[] = [
     ready: false,
   },
   {
+    name: 'AUTOMATION_WEBHOOK_URL pointing inside a private network',
+    env: { AUTOMATION_WEBHOOK_URL: 'https://10.0.0.1/hook' },
+    problems: [messages.webhookUrlLocal],
+    ready: false,
+  },
+  {
+    name: 'AUTOMATION_WEBHOOK_URL pointing at a carrier-NAT address',
+    env: { AUTOMATION_WEBHOOK_URL: 'https://100.100.0.1/hook' },
+    problems: [messages.webhookUrlLocal],
+    ready: false,
+  },
+  {
+    name: 'AUTOMATION_WEBHOOK_URL pointing at an IPv4-mapped private address',
+    env: { AUTOMATION_WEBHOOK_URL: 'https://[::ffff:192.168.1.1]/hook' },
+    problems: [messages.webhookUrlLocal],
+    ready: false,
+  },
+  {
+    name: 'AUTOMATION_WEBHOOK_URL pointing at a unique-local IPv6 address',
+    env: { AUTOMATION_WEBHOOK_URL: 'https://[fd00::1]/hook' },
+    problems: [messages.webhookUrlLocal],
+    ready: false,
+  },
+  {
     name: 'AUTOMATION_WEBHOOK_KEY without a header on a preset that has none',
     env: { AUTOMATION_PROVIDER: 'zapier' },
     problems: [messages.webhookKeyWithoutHeader],

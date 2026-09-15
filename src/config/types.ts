@@ -6,7 +6,7 @@
  * ConfigProblem is deployer-facing text: the status page and the README print it, so it
  * never contains a value. The whole result is frozen after boot.
  */
-import type { LlmCatalog } from '../llm/registry.js';
+import type { LlmCatalog, ReasoningSetting } from '../llm/registry.js';
 import type { SignatureMode } from '../security/types.js';
 import type { PresetCatalog } from '../tools/registry.js';
 import type { AutomationPresetId } from '../tools/types.js';
@@ -34,6 +34,8 @@ export interface AppConfig {
   /** LLM_MODEL when set, otherwise the provider's defaultModel. */
   LLM_MODEL: string;
   LLM_TIMEOUT_MS: number;
+  /** How hard the model should think. 'default' leaves the provider's own setting alone. */
+  LLM_REASONING_EFFORT: ReasoningSetting;
   /**
    * Derived: the selected provider's key, read from the variable the provider names (keyEnv).
    * Null when that variable is unset or the provider needs no key.

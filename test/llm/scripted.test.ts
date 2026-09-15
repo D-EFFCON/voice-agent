@@ -32,7 +32,7 @@ async function say(text: string, options: Options = {}): Promise<LlmEvent[]> {
   const client = scriptedClient({ model: 'scripted', tokenDelayMs: 0 });
   const events: LlmEvent[] = [];
   const messages: LlmMessage[] = options.history ?? [
-    { role: 'system', content: 'You answer a complaints line.' },
+    { role: 'system', content: 'You answer the phone for a small business.' },
     { role: 'user', content: text },
   ];
   for await (const event of client.stream({
@@ -58,7 +58,7 @@ const terminals = (events: readonly LlmEvent[]): LlmEvent[] =>
 
 describe('scripted provider: the contract', () => {
   it('always ends with exactly one terminal, whatever the caller says', async () => {
-    for (const text of ['hello', 'fail', 'slow', 'human', 'goodbye', '', 'a complaint']) {
+    for (const text of ['hello', 'fail', 'slow', 'human', 'goodbye', '', 'a problem']) {
       const events = await say(text, { timeoutMs: 120, stallMs: 60 });
       expect(terminals(events), `for "${text}"`).toHaveLength(1);
       expect(['finish', 'error']).toContain(events.at(-1)?.type);
@@ -137,8 +137,8 @@ describe('scripted provider: the triggers', () => {
     expect(spoken(events)).toContain('How can I help');
   });
 
-  it('asks for detail when the caller mentions a complaint', async () => {
-    expect(spoken(await say('I have a complaint'))).toContain('what happened');
+  it('asks for detail when the caller mentions a problem', async () => {
+    expect(spoken(await say('I have a problem'))).toContain('what happened');
   });
 });
 

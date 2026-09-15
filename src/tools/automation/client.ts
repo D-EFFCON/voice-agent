@@ -86,7 +86,7 @@ export function createAutomationClient(options: AutomationClientOptions): Automa
           redirect: 'manual',
           signal: abort,
         });
-        result = await readResponse(response, preset, started);
+        result = await readResponse(response, preset, started, timeout);
       } catch (err) {
         result = {
           status: timeout.aborted ? 'timeout' : 'failed',
@@ -115,10 +115,22 @@ export function createAutomationClient(options: AutomationClientOptions): Automa
   };
 }
 
+/**
+ * Why a body did not arrive matters. 'too_large' means the webhook answered in full and this server
+ * chose to stop reading; 'unreadable' means the answer never finished. Reporting both as the size
+ * limit put a timed-out webhook into the logs, and into the handoff data a person reads, as one
+ * that said too much.
+ */
+type BodyRead =
+  | { kind: 'read'; text: string }
+  | { kind: 'too_large' }
+  | { kind: 'unreadable'; timedOut: boolean };
+
 async function readResponse(
   response: Response,
   preset: AutomationPreset,
   started: number,
+  timeout: AbortSignal,
 ): Promise<AutomationPostResult> {
   const httpStatus = response.status;
   const ms = (): number => Date.now() - started;
@@ -148,8 +160,8 @@ async function readResponse(
     return { status: 'ack', httpStatus, fields: {}, ms: ms() };
   }
 
-  const body = await readCapped(response);
-  if (body === null) {
+  const body = await readCapped(response, timeout);
+  if (body.kind === 'too_large') {
     return {
       status: 'ok',
       httpStatus,
@@ -158,8 +170,21 @@ async function readResponse(
       error: 'The webhook answered with more data than this server reads, so nothing was merged.',
     };
   }
+  if (body.kind === 'unreadable') {
+    // It did answer, so the scenario most likely ran; what did not finish is the answer coming
+    // back. Saying 'ok' here would put a stalled webhook in the handoff data as a healthy one.
+    return {
+      status: body.timedOut ? 'timeout' : 'failed',
+      httpStatus,
+      fields: {},
+      ms: ms(),
+      error: body.timedOut
+        ? `The webhook answered with ${String(httpStatus)} but stopped sending before the body finished, so nothing was merged.`
+        : `The webhook answered with ${String(httpStatus)} but its answer could not be read, so nothing was merged.`,
+    };
+  }
 
-  const parsed = parseJsonObject(body);
+  const parsed = parseJsonObject(body.text);
   if (parsed === null) {
     return {
       status: 'ok',
@@ -173,10 +198,10 @@ async function readResponse(
   return { status: 'ok', httpStatus, fields: mergeAllowed(parsed), ms: ms() };
 }
 
-/** The body as text, or null when it runs past the cap. */
-async function readCapped(response: Response): Promise<string | null> {
+/** The body as text, or which of the three ways it did not arrive. */
+async function readCapped(response: Response, timeout: AbortSignal): Promise<BodyRead> {
   const body = response.body;
-  if (body === null) return '';
+  if (body === null) return { kind: 'read', text: '' };
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -188,16 +213,21 @@ async function readCapped(response: Response): Promise<string | null> {
       const value = chunk.value;
       if (value === undefined) continue;
       size += value.byteLength;
-      if (size > RESPONSE_CAP_BYTES) return null;
+      if (size > RESPONSE_CAP_BYTES) return { kind: 'too_large' };
       chunks.push(value);
     }
   } catch {
-    return null;
+    // The timeout signal is the one thing that says whether we gave up on the body or the webhook
+    // did: AbortSignal.any means the error itself looks the same either way.
+    return { kind: 'unreadable', timedOut: timeout.aborted };
   } finally {
     reader.releaseLock();
     void body.cancel().catch(() => undefined);
   }
-  return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8');
+  return {
+    kind: 'read',
+    text: Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8'),
+  };
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {

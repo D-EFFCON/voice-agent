@@ -6,6 +6,7 @@ import {
   outboundFrame,
   parseInboundFrame,
   textFrame,
+  UTTERANCE_MAX_CHARS,
 } from '../../src/voice/conversationrelay/wire.js';
 
 /** The setup message as Twilio's reference documents it, plus fields this server ignores. */
@@ -23,7 +24,7 @@ const documentedSetup = {
   callStatus: 'IN-PROGRESS',
   accountSid: 'AC00000000000000000000000000000000',
   applicationSid: null,
-  customParameters: { tenant: 'acme', line: 'complaints' },
+  customParameters: { tenant: 'acme', line: 'support' },
   somethingTwilioAddsLater: { nested: true },
 };
 
@@ -42,7 +43,7 @@ describe('inbound frames', () => {
     expect(result.frame.sessionId).toBe(documentedSetup.sessionId);
     expect(result.frame.from).toBe('+14155550100');
     expect(result.frame.direction).toBe('inbound');
-    expect(result.frame.customParameters).toEqual({ tenant: 'acme', line: 'complaints' });
+    expect(result.frame.customParameters).toEqual({ tenant: 'acme', line: 'support' });
     expect(result.frame).not.toHaveProperty('somethingTwilioAddsLater');
     // null in a recorded-only field is tolerated and read as absent.
     expect(result.frame.applicationSid).toBeUndefined();
@@ -114,6 +115,23 @@ describe('inbound frames', () => {
     });
   });
 
+  it('a prompt with no usable last field is treated as final, not dropped', () => {
+    // partialPrompts is off unless the TwiML asks for it, so an unlabelled prompt is a final one.
+    // The alternative is a malformed frame, which the link logs and ignores - and an ignored
+    // prompt is a caller who said something and got silence back.
+    const missing = parseInboundFrame('{"type":"prompt","voicePrompt":"I want a person"}');
+    expect(missing.ok).toBe(true);
+    if (!missing.ok || missing.frame.type !== 'prompt') return;
+    expect(missing.frame.last).toBe(true);
+
+    const odd = parseInboundFrame('{"type":"prompt","voicePrompt":"I want a person","last":"yes"}');
+    expect(odd.ok && odd.frame.type === 'prompt' && odd.frame.last).toBe(true);
+
+    // A real false still means a partial, which the link declines to act on.
+    const partial = parseInboundFrame('{"type":"prompt","voicePrompt":"I want","last":false}');
+    expect(partial.ok && partial.frame.type === 'prompt' && partial.frame.last).toBe(false);
+  });
+
   it('a prompt without voicePrompt is malformed', () => {
     const result = parseInboundFrame('{"type":"prompt","last":true}');
     expect(result).toEqual({
@@ -160,6 +178,26 @@ describe('inbound frames', () => {
   it('the union schema itself accepts the documented shapes', () => {
     expect(inboundFrame.safeParse(documentedSetup).success).toBe(true);
     expect(inboundFrame.safeParse({ type: 'bogus' }).success).toBe(false);
+  });
+
+  it('cuts an overlong voicePrompt instead of refusing the frame', () => {
+    const huge = 'a'.repeat(UTTERANCE_MAX_CHARS + 5_000);
+    const result = parseInboundFrame(
+      JSON.stringify({ type: 'prompt', voicePrompt: huge, last: true }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.frame.type !== 'prompt') return;
+    expect(result.frame.voicePrompt).toHaveLength(UTTERANCE_MAX_CHARS);
+    expect(result.frame.last).toBe(true);
+  });
+
+  it('leaves an utterance of a normal length alone', () => {
+    const said = 'I would like to speak to someone about my bill, please.';
+    const result = parseInboundFrame(
+      JSON.stringify({ type: 'prompt', voicePrompt: said, last: true }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok && result.frame.type === 'prompt') expect(result.frame.voicePrompt).toBe(said);
   });
 });
 

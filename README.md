@@ -76,6 +76,7 @@ Drag in three widgets and connect them like this.
 
 - **WebSocket URL**: the URL you wrote down in step 4.
 - **Welcome Greeting**: what the caller hears first, before the AI says anything. Something like `Hi, you've reached Example Company. How can I help?`
+- **AI Hints**: worth two minutes. A comma-separated list of the words a phone line mishears on your calls — your company name, a surname, a street or a suburb, a product. Transcription gets better on exactly the words that matter to you, which are usually the ones a general model has never seen.
 - Leave everything else alone for now. Language, voice and speech settings all have sensible defaults, and you can come back to them.
 
 Note the widget's name. It will be something like `run_crelay_1`. You need it in the next step.
@@ -131,9 +132,11 @@ If your webhook is slow, broken or switched off, **the caller still gets transfe
 
 ## Changing how the agent behaves
 
-**What it says and how it acts** is one variable: `SYSTEM_PROMPT`. It ships with a complaints-line prompt for a made-up company, so you will want to change it. Write it as instructions to a person answering your phone. Keep it short, tell it to keep replies to a sentence or two, and tell it when to hand over.
+**What it says and how it acts** is one variable: `SYSTEM_PROMPT`. It ships with a deliberately generic starter prompt for a made-up company — it answers, works out why the caller rang, and hands over — so this is the first thing to change for whatever your line does. Write it as instructions to a person answering your phone. Keep it short, tell it to keep replies to a sentence or two, and tell it when to hand over.
 
 **Which AI it uses** is `LLM_PROVIDER` plus that provider's key. The default is `openai` with the `gpt-4o-mini` model, chosen because it starts talking fastest. Newer models think before they answer, which on a phone call sounds like a dead line. Set `LLM_MODEL` if you want a different one.
+
+**If you do pick a newer model,** set `LLM_REASONING_EFFORT=off` with it. That is the switch that tells a thinking model to answer straight away instead of pausing first, and it is the difference between a model you can use on a phone and one you cannot. It works on all five providers — each one spells the setting differently and the template translates for you. Leave it unset and each model keeps whatever it does by default, which for Google's `gemini-2.5-flash` means it thinks before every reply. Two warnings: a handful of the very newest reasoning models refuse `off` and will return an error instead, and turning it up (`low`, `medium`, `high`) buys thinking time your caller spends listening to silence.
 
 **The spoken lines** for handing over, apologising and closing a long call are `HANDOFF_MESSAGE`, `FALLBACK_MESSAGE` and `CLOSING_MESSAGE`.
 
@@ -155,6 +158,8 @@ Every setting is in the table at the bottom of this page.
 
 **Twilio says the connection was refused.** In the Railway logs look for `ws.rejected`. The `reason` tells you which check failed: `path` means the secret in the URL is wrong, `signature` means `TWILIO_AUTH_TOKEN` does not match your account, `not_ready` means fix the problems on the status page first, and `capacity` means all your call slots are busy.
 
+**The agent talks over itself, or stops mid-sentence for no reason.** ConversationRelay stops speaking the moment it hears the caller, and by default a “mm-hmm” or a “yeah” counts as the caller speaking. Twilio has two settings that soften this, `ignoreBackchannel` and `interruptSensitivity`, but the Studio widget does not offer them: they exist only if you write the `<ConversationRelay>` TwiML yourself instead of using Studio, which this guide does not cover. If your callers ring from cars and cafes and the agent keeps cutting itself off, that is the cause.
+
 **Reading the logs.** Railway's log view accepts a filter. `@event:call.ended` shows one line per finished call with an `outcome`: `handoff` means a person took over, `completed` means the AI finished normally, `caller_hangup` means they hung up, and `error` or `timeout` mean something went wrong. `@event:turn.timing` shows how fast each reply was.
 
 Still stuck? Open an issue on GitHub and paste what your status page says. Do not paste your keys.
@@ -163,11 +168,15 @@ Still stuck? Open an issue on GitHub and paste what your status page says. Do no
 
 ## Privacy and recording
 
-This server stores nothing. A conversation lives in memory during the call and is gone when it ends. Nothing is sent anywhere except the AI provider you chose and the webhook you configured.
+This server has no database. A conversation lives in memory during the call and is gone when it ends. Nothing is sent anywhere except the AI provider you chose and the webhook you configured.
+
+The logs are the exception, and they are worth knowing about. Every call writes lines carrying its Twilio call SID and the caller's and called numbers, and your host keeps those lines for you to read — Railway holds them for days. So "nothing is stored" is true of the conversation, not of who rang and when. Leave `LOG_LEVEL` at `info` in production: at `debug` the logs also carry what the caller said, turn by turn.
 
 **Recording calls and telling callers about it is your responsibility, not this template's.** The rules differ by country and by state, and in many places you must tell the caller before recording. This template records nothing by default and takes no position on your local law. If you turn on Twilio's call recording, or if your automation stores what callers say, find out what your jurisdiction requires and put it in your greeting.
 
 `HANDOFF_INCLUDE_TRANSCRIPT` is off by default. Turning it on sends what the caller said to your automation tool.
+
+**Do not take card numbers on this line.** Twilio asks you to keep payment card data out of the greeting, the hints and the handoff data, and the handoff data is where this server puts its summary of the call. Nothing here is built to hold card details safely, so keep them off the call and send people to something that is.
 
 ---
 
@@ -233,12 +242,13 @@ pnpm dev
 | `MISTRAL_API_KEY` (secret) | when LLM_PROVIDER is mistral |  | API key for Mistral. Create one at console.mistral.ai under API keys. |
 | `GROQ_API_KEY` (secret) | when LLM_PROVIDER is groq |  | API key for Groq. Create one at console.groq.com under API keys. |
 | `LLM_TIMEOUT_MS` | no | `20000` | How long to wait for the model, in milliseconds: for the whole reply and for any gap between words. On timeout the caller hears FALLBACK_MESSAGE and goes to a person. |
+| `LLM_REASONING_EFFORT` | no | `default` | How hard the model thinks before it answers. Thinking costs seconds of silence the caller hears, so off is the usual choice for a phone line; default leaves the model's own setting alone. Ignored by models that cannot think, and a few of the newest reasoning models reject off outright. Values: default, off, low, medium, high. |
 
 ### Prompt and spoken messages
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `SYSTEM_PROMPT` | no | the bundled complaints-line prompt (src/config/defaults.ts) | Instructions for the AI, including its name and your business name. Multi-line values are fine. |
+| `SYSTEM_PROMPT` | no | the bundled starter prompt (src/config/defaults.ts) | Instructions for the AI, including its name and your business name. Multi-line values are fine. |
 | `FALLBACK_MESSAGE` | no | `Sorry, I am having trouble right now. Let me put you through to a person.` | Spoken when the model fails or times out, before the caller goes to a person. |
 | `HANDOFF_MESSAGE` | no | `One moment while I put you through to the team.` | Spoken when the AI hands the caller to a person and has not already said so. |
 | `CLOSING_MESSAGE` | no | `We have reached the time limit for this call. Thank you for calling. Goodbye.` | Spoken when a call reaches MAX_CALL_SECONDS, before it ends. |

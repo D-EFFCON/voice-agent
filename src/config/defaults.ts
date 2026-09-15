@@ -1,20 +1,34 @@
 /**
  * Bundled defaults: what the server uses when a variable is unset or invalid.
  *
- * The complaints-line prompt lives here rather than under src/agent because config owns every
+ * The starter prompt lives here rather than under src/agent because config owns every
  * default and the agent core may import config types only, never values (ADR 0003). The agent
  * receives SYSTEM_PROMPT through its settings slice, always as a string.
  */
 
-/** The names in the first line are placeholders; deployers set SYSTEM_PROMPT to change them. */
+import type { ReasoningSetting } from '../llm/registry.js';
+
+/**
+ * A deliberately generic starter: it answers, finds out why the caller rang, and hands over.
+ * It is not written for any particular line of business, because the template is not either.
+ * The names in the first line are placeholders; deployers set SYSTEM_PROMPT to change all of it.
+ */
 export const DEFAULT_SYSTEM_PROMPT = [
-  "You are Sam, the phone assistant for Example Company's complaints line.",
+  'You are Sam, the phone assistant for Example Company.',
   'You are talking to a caller on the phone. Keep every reply short: one or two sentences, plain words, no lists.',
-  'Your job is to listen to the complaint, ask what happened and what the caller would like done, and confirm you have understood.',
-  'When the caller asks for a person, or when the matter needs one (a refund, a legal threat, anyone in danger, or something you cannot help with), call the handoff_to_team tool with a short reason and a summary of what the caller said.',
-  'When the complaint is fully captured and the caller has nothing else, say goodbye and end the call.',
+  'Your job is to find out why the caller is ringing, ask for the details that matter, and confirm you have understood.',
+  'When the caller asks for a person, or when the matter needs one (anything involving money, a legal threat, anyone in danger, or something you cannot help with), call the handoff_to_team tool with a short reason and a summary of what the caller said.',
+  'When the caller has what they came for and nothing else to raise, say goodbye and end the call.',
   'Never invent policies, prices or promises. If you do not know, say so and offer the team.',
 ].join('\n');
+
+/**
+ * Unset leaves every provider's own reasoning setting alone, so adding this variable changed no
+ * existing deployment's behaviour. 'off' is the one most voice deployments want — see the README
+ * row — but it is not the default, because switching a running deployment's model from thinking
+ * to not thinking is the deployer's decision, not an upgrade's.
+ */
+export const DEFAULT_REASONING_EFFORT: ReasoningSetting = 'default';
 
 export const DEFAULT_FALLBACK_MESSAGE =
   'Sorry, I am having trouble right now. Let me put you through to a person.';
