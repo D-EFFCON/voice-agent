@@ -1,0 +1,10 @@
+# False positives the secret scan should not fail on.
+#
+# Format: <commit>:<file>:<rule-id>:<line>. Fingerprints are pinned to a commit, so an entry only
+# ever excuses the one occurrence it names and a real secret added later still fails the scan.
+#
+# A made-up API key in a test, removed in the next commit (b432294) but still present in the
+# history the scan reads. gitleaks' generic-api-key rule fires on entropy alone when a literal is
+# assigned straight to apiKey; the value was never real and was never read, because that test
+# mocks streamText.
+113460ea59dc3f062a407fe9afc492ea0960f0d3:test/llm/reasoning.test.ts:generic-api-key:58
