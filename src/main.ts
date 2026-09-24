@@ -60,6 +60,7 @@ const llm = createLlmClient({
   model: config.LLM_MODEL,
   apiKey: config.llmApiKey ?? '',
   reasoning: config.LLM_REASONING_EFFORT,
+  speed: config.LLM_SPEED,
 });
 
 const preset = presets.find((p) => p.id === config.AUTOMATION_PROVIDER) ?? presets[0];

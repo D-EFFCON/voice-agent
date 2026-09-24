@@ -66,6 +66,23 @@ const textModel = (
     ] as Part[]),
   );
 
+/**
+ * A model that answers normally but reports a setting it quietly refused, the way a provider
+ * answers a request for a tier the model does not sell: the call succeeds, the setting is gone.
+ */
+const warningModel = (
+  warnings: readonly { type: 'unsupported'; feature: string; details?: string }[],
+): MockLanguageModelV4 =>
+  modelStreaming(() =>
+    partsToStream([
+      { type: 'stream-start', warnings },
+      { type: 'text-start', id: 't1' },
+      { type: 'text-delta', id: 't1', delta: 'OK' },
+      { type: 'text-end', id: 't1' },
+      { type: 'finish', finishReason: finish('stop'), usage: usage(7, 1) },
+    ] as Part[]),
+  );
+
 /** A model that never produces anything and never closes its stream. */
 const silentModel = (): MockLanguageModelV4 =>
   modelStreaming(() => new ReadableStream({ start: () => {} }));
@@ -444,6 +461,41 @@ describe('aiSdkClient: probe', () => {
     await expect(client(throwingModel(new Error('boom'))).probe()).resolves.toMatchObject({
       ok: false,
     });
+  });
+
+  it('says nothing about warnings when the provider honoured everything', async () => {
+    expect(await client(textModel(['OK'])).probe()).not.toHaveProperty('warnings');
+  });
+
+  it('reports a setting the provider dropped, naming the variable that set it', async () => {
+    // The whole point: this call succeeds. Without the warning the deployer sees a green
+    // self-test and pays standard rates for standard speed, with nothing saying why.
+    const result = await client(
+      warningModel([
+        { type: 'unsupported', feature: 'serviceTier', details: 'only on the larger models' },
+      ]),
+    ).probe();
+
+    expect(result.ok).toBe(true);
+    expect(result.warnings).toEqual([
+      'LLM_SPEED was ignored: this model does not support it. only on the larger models',
+    ]);
+  });
+
+  it('falls back to the SDK name for a setting it has no variable for', async () => {
+    const result = await client(
+      warningModel([{ type: 'unsupported', feature: 'somethingElse' }]),
+    ).probe();
+
+    expect(result.warnings).toEqual(['somethingElse was ignored: this model does not support it.']);
+  });
+
+  it('ignores warnings that are not about an unsupported setting', async () => {
+    const result = await client(
+      warningModel([{ type: 'other', feature: 'whatever' } as never]),
+    ).probe();
+
+    expect(result).not.toHaveProperty('warnings');
   });
 });
 

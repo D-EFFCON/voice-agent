@@ -10,15 +10,16 @@ import { groq } from './providers/groq.js';
 import { mistral } from './providers/mistral.js';
 import { openai } from './providers/openai.js';
 import { REASONING_SETTINGS, type ReasoningSetting } from './reasoning.js';
+import { SPEED_SETTINGS, type SpeedSetting } from './speed.js';
 import type { LlmClient, LlmProviderModule } from './types.js';
 
 /**
  * Re-exported because config reaches src/llm through this file only (test/arch/imports.test.ts).
- * LLM_REASONING_EFFORT's valid values therefore follow the vocabulary, the same way LLM_PROVIDER's
- * follow llmCatalog.
+ * LLM_REASONING_EFFORT's and LLM_SPEED's valid values therefore follow the vocabularies, the same
+ * way LLM_PROVIDER's follow llmCatalog.
  */
-export { REASONING_SETTINGS };
-export type { ReasoningSetting };
+export { REASONING_SETTINGS, SPEED_SETTINGS };
+export type { ReasoningSetting, SpeedSetting };
 
 export const providers: readonly LlmProviderModule[] = [
   openai,
@@ -67,6 +68,8 @@ export function createLlmClient(o: {
   apiKey: string;
   /** LLM_REASONING_EFFORT; 'default' and undefined both leave the provider's own setting alone. */
   reasoning?: ReasoningSetting;
+  /** LLM_SPEED; 'default' and undefined both leave the provider's own tier alone. */
+  speed?: SpeedSetting;
 }): LlmClient {
   const provider = providers.find((p) => p.id === o.provider);
   if (!provider) {
@@ -76,9 +79,11 @@ export function createLlmClient(o: {
   const model = requested === '' ? provider.defaultModel : requested;
   const reasoning =
     o.reasoning === undefined || o.reasoning === 'default' ? undefined : o.reasoning;
+  const speed = o.speed === undefined || o.speed === 'default' ? undefined : o.speed;
   return provider.create({
     model,
     apiKey: o.apiKey,
     ...(reasoning === undefined ? {} : { reasoning }),
+    ...(speed === undefined ? {} : { speed }),
   });
 }

@@ -8,8 +8,10 @@
  */
 import {
   REASONING_SETTINGS,
+  SPEED_SETTINGS,
   type LlmCatalogEntry,
   type ReasoningSetting,
+  type SpeedSetting,
 } from '../llm/registry.js';
 import type { SignatureMode } from '../security/types.js';
 import type { AutomationPreset } from '../tools/types.js';
@@ -17,11 +19,13 @@ import {
   DEFAULT_AGENT_END_CALL,
   DEFAULT_CLOSING_MESSAGE,
   DEFAULT_FALLBACK_MESSAGE,
+  DEFAULT_HANDOFF_INCLUDE_PROMPT,
   DEFAULT_HANDOFF_INCLUDE_TRANSCRIPT,
   DEFAULT_HANDOFF_MESSAGE,
   DEFAULT_LOG_LEVEL,
   DEFAULT_REASONING_EFFORT,
   DEFAULT_SIGNATURE_MODE,
+  DEFAULT_SPEED,
   DEFAULT_SYSTEM_PROMPT,
   RANGES,
   STATUS_TOKEN_MIN_LENGTH,
@@ -73,6 +77,7 @@ export interface EnvSchema {
   providerKeys: readonly ProviderKeySpec[];
   LLM_TIMEOUT_MS: DefaultedSpec<number>;
   LLM_REASONING_EFFORT: DefaultedSpec<ReasoningSetting>;
+  LLM_SPEED: DefaultedSpec<SpeedSetting>;
   SYSTEM_PROMPT: DefaultedSpec<string>;
   FALLBACK_MESSAGE: DefaultedSpec<string>;
   HANDOFF_MESSAGE: DefaultedSpec<string>;
@@ -84,6 +89,7 @@ export interface EnvSchema {
   AUTOMATION_WEBHOOK_KEY_HEADER: EnvSpec<string>;
   AUTOMATION_TIMEOUT_MS: DefaultedSpec<number>;
   HANDOFF_INCLUDE_TRANSCRIPT: DefaultedSpec<boolean>;
+  HANDOFF_INCLUDE_PROMPT: DefaultedSpec<boolean>;
   AGENT_END_CALL: DefaultedSpec<boolean>;
   MAX_CALL_SECONDS: DefaultedSpec<number>;
   IDLE_TIMEOUT_SECONDS: DefaultedSpec<number>;
@@ -289,6 +295,18 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     parse: enumOf('LLM_REASONING_EFFORT', REASONING_SETTINGS, DEFAULT_REASONING_EFFORT),
   };
 
+  const LLM_SPEED: DefaultedSpec<SpeedSetting> = {
+    key: 'LLM_SPEED',
+    group: 'LLM',
+    description:
+      "Which speed tier to buy from the provider. fast is the provider's paid faster tier, which costs about twice the standard rate and exists only on their larger models; default leaves the provider's own tier alone. Ignored by providers that sell no faster tier, and a model without one runs at standard speed and says so on the self-test.",
+    required: false,
+    defaultValue: DEFAULT_SPEED,
+    secret: false,
+    validValues: SPEED_SETTINGS,
+    parse: enumOf('LLM_SPEED', SPEED_SETTINGS, DEFAULT_SPEED),
+  };
+
   const SYSTEM_PROMPT: DefaultedSpec<string> = {
     ...spoken(
       'SYSTEM_PROMPT',
@@ -377,6 +395,13 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     DEFAULT_HANDOFF_INCLUDE_TRANSCRIPT,
   );
 
+  const HANDOFF_INCLUDE_PROMPT = bool(
+    'HANDOFF_INCLUDE_PROMPT',
+    'Automation',
+    'true sends SYSTEM_PROMPT to the webhook with each handoff, so you can see which prompt produced each call. false leaves it out.',
+    DEFAULT_HANDOFF_INCLUDE_PROMPT,
+  );
+
   const AGENT_END_CALL = bool(
     'AGENT_END_CALL',
     'Call limits',
@@ -436,6 +461,7 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     ...providerKeys,
     LLM_TIMEOUT_MS,
     LLM_REASONING_EFFORT,
+    LLM_SPEED,
     SYSTEM_PROMPT,
     FALLBACK_MESSAGE,
     HANDOFF_MESSAGE,
@@ -446,6 +472,7 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     AUTOMATION_WEBHOOK_KEY_HEADER,
     AUTOMATION_TIMEOUT_MS,
     HANDOFF_INCLUDE_TRANSCRIPT,
+    HANDOFF_INCLUDE_PROMPT,
     AGENT_END_CALL,
     MAX_CALL_SECONDS,
     IDLE_TIMEOUT_SECONDS,
@@ -468,6 +495,7 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     providerKeys,
     LLM_TIMEOUT_MS,
     LLM_REASONING_EFFORT,
+    LLM_SPEED,
     SYSTEM_PROMPT,
     FALLBACK_MESSAGE,
     HANDOFF_MESSAGE,
@@ -478,6 +506,7 @@ export function envSchema(catalogs: Catalogs): EnvSchema {
     AUTOMATION_WEBHOOK_KEY_HEADER,
     AUTOMATION_TIMEOUT_MS,
     HANDOFF_INCLUDE_TRANSCRIPT,
+    HANDOFF_INCLUDE_PROMPT,
     AGENT_END_CALL,
     MAX_CALL_SECONDS,
     IDLE_TIMEOUT_SECONDS,
