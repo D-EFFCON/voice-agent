@@ -266,6 +266,7 @@ pnpm dev
 | `AUTOMATION_WEBHOOK_KEY_HEADER` | no | the preset's header | Header that carries AUTOMATION_WEBHOOK_KEY. Unset uses the preset's header (make: x-make-apikey, n8n: x-api-key). |
 | `AUTOMATION_TIMEOUT_MS` | no | `5000` | How long to wait for the webhook to answer, in milliseconds. |
 | `HANDOFF_INCLUDE_TRANSCRIPT` | no | `false` | true sends the call transcript to the webhook with each handoff. false sends the summary only. Values: true, false. |
+| `HANDOFF_INCLUDE_PROMPT` | no | `false` | true sends SYSTEM_PROMPT to the webhook with each handoff, so you can see which prompt produced each call. false leaves it out. Values: true, false. |
 
 ### Call limits
 

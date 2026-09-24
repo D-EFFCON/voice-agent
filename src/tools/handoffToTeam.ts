@@ -27,12 +27,16 @@ const handoffInput = z.object({
   reason: z
     .string()
     .max(REASON_MAX)
-    .describe('Why the caller needs a person, in one short phrase.'),
+    .describe(
+      'A short category for why the caller needs a person, three to six words, e.g. "Charger fault" or "Billing dispute". Not a sentence.',
+    ),
   summary: z
     .string()
     .max(SUMMARY_MAX)
     .optional()
-    .describe('What the caller said, so the person taking over does not have to start again.'),
+    .describe(
+      'The facts the person taking over needs so they do not ask again: who or where the caller is, what is wrong or wanted, what they have already tried, and anything they asked for. Plain sentences. Do not repeat the reason.',
+    ),
 });
 
 export type HandoffInput = z.infer<typeof handoffInput>;
@@ -113,6 +117,9 @@ export function createHandoffTool(options: HandoffToolOptions): ToolDefinition<H
         ...(ctx.settings.HANDOFF_INCLUDE_TRANSCRIPT
           ? { transcript: toTranscript(ctx.history) }
           : {}),
+        provider: ctx.llm.provider,
+        model: ctx.llm.model,
+        ...(ctx.settings.HANDOFF_INCLUDE_PROMPT ? systemPromptOf(ctx.history) : {}),
       };
 
       const posted = await options.automation.post(payload, ctx.signal);
@@ -130,6 +137,16 @@ export function createHandoffTool(options: HandoffToolOptions): ToolDefinition<H
       };
     },
   };
+}
+
+/**
+ * The deployer's own prompt, taken from the head of the history where the session put it, so the
+ * tool needs no copy of SYSTEM_PROMPT in its settings. Sent verbatim, line breaks and all: it is
+ * the deployer's text rather than the caller's, and they want it exactly as the model saw it.
+ */
+function systemPromptOf(history: ToolContext['history']): { systemPrompt?: string } {
+  const system = history.find((message) => message.role === 'system');
+  return system === undefined ? {} : { systemPrompt: system.content };
 }
 
 /** Only what a person taking over needs: who said what, in order, without the system prompt. */

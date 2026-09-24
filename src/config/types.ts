@@ -59,6 +59,7 @@ export interface AppConfig {
   AUTOMATION_WEBHOOK_KEY_HEADER: string | null;
   AUTOMATION_TIMEOUT_MS: number;
   HANDOFF_INCLUDE_TRANSCRIPT: boolean;
+  HANDOFF_INCLUDE_PROMPT: boolean;
 
   // Call limits
   AGENT_END_CALL: boolean;

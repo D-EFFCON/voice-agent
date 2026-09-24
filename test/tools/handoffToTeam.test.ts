@@ -48,8 +48,13 @@ function context(over: Partial<ToolContext> = {}): ToolContext {
       startedAt: new Date(STARTED_MS).toISOString(),
       custom: {},
     },
+    llm: { provider: 'anthropic', model: 'claude-haiku-4-5' },
     history: [],
-    settings: { HANDOFF_INCLUDE_TRANSCRIPT: false, AUTOMATION_TIMEOUT_MS: 5_000 },
+    settings: {
+      HANDOFF_INCLUDE_TRANSCRIPT: false,
+      HANDOFF_INCLUDE_PROMPT: false,
+      AUTOMATION_TIMEOUT_MS: 5_000,
+    },
     log: noopLog,
     signal: new AbortController().signal,
     ...over,
@@ -101,6 +106,8 @@ describe('handoff_to_team: the payload', () => {
       durationSec: 42,
       reason: 'Caller wants a person',
       summary: 'Parcel arrived damaged',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
     });
   });
 
@@ -156,7 +163,7 @@ describe('handoff_to_team: the payload', () => {
       { reason: 'x' },
       context({
         history,
-        settings: { HANDOFF_INCLUDE_TRANSCRIPT: true, AUTOMATION_TIMEOUT_MS: 5_000 },
+        settings: { ...context().settings, HANDOFF_INCLUDE_TRANSCRIPT: true },
       }),
     );
     // The system prompt is the deployer's own text, not conversation, so it stays out.
@@ -164,6 +171,35 @@ describe('handoff_to_team: the payload', () => {
       { role: 'user', text: 'My parcel is broken' },
       { role: 'assistant', text: 'I am sorry to hear that.' },
     ]);
+  });
+
+  it('always names the provider and model the call ran on', async () => {
+    const { automation, posted } = recorder();
+
+    await tool(automation).run({ reason: 'x' }, context());
+
+    expect(posted[0]).toMatchObject({ provider: 'anthropic', model: 'claude-haiku-4-5' });
+  });
+
+  it('sends the system prompt verbatim only when HANDOFF_INCLUDE_PROMPT is on', async () => {
+    const prompt = 'You are Jenny.\nKeep replies short.';
+    const history: LlmMessage[] = [
+      { role: 'system', content: prompt },
+      { role: 'user', content: 'Hi' },
+    ];
+
+    const off = recorder();
+    await tool(off.automation).run({ reason: 'x' }, context({ history }));
+    expect(off.posted[0]).not.toHaveProperty('systemPrompt');
+
+    const on = recorder();
+    await tool(on.automation).run(
+      { reason: 'x' },
+      context({ history, settings: { ...context().settings, HANDOFF_INCLUDE_PROMPT: true } }),
+    );
+    // The deployer's own text, so its line breaks survive; caller text is what gets sanitised.
+    expect(on.posted[0]?.systemPrompt).toBe(prompt);
+    expect(on.posted[0]).not.toHaveProperty('transcript');
   });
 
   it('reports a zero duration rather than NaN when the start time is unusable', async () => {
