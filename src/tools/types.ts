@@ -17,11 +17,14 @@ import type { CallInfo } from '../voice/types.js';
  */
 export interface ToolSettings {
   HANDOFF_INCLUDE_TRANSCRIPT: boolean;
+  HANDOFF_INCLUDE_PROMPT: boolean;
   AUTOMATION_TIMEOUT_MS: number;
 }
 
 export interface ToolContext {
   call: CallInfo;
+  /** The provider id and model the call is running on, as LlmClient reports them. */
+  llm: { provider: string; model: string };
   history: readonly LlmMessage[];
   settings: ToolSettings;
   log: Logger;
@@ -91,6 +94,12 @@ export interface HandoffPayload {
   custom?: Record<string, string>;
   /** Only when HANDOFF_INCLUDE_TRANSCRIPT=true. */
   transcript?: { role: 'user' | 'assistant'; text: string }[];
+  /** The LLM provider id the call ran on. */
+  provider: string;
+  /** The model the call ran on. */
+  model: string;
+  /** Only when HANDOFF_INCLUDE_PROMPT=true. The deployer's SYSTEM_PROMPT, verbatim. */
+  systemPrompt?: string;
 }
 
 export interface AutomationPostResult {

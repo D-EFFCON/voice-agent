@@ -45,6 +45,8 @@ const payload = (over: Partial<HandoffPayload> = {}): HandoffPayload => ({
   durationSec: 1,
   reason: 'The caller asked for a person.',
   summary: 'A parcel arrived damaged.',
+  provider: 'fake',
+  model: 'fake-model',
   ...over,
 });
 

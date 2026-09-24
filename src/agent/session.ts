@@ -616,6 +616,7 @@ export class CallSession implements AgentPort {
     try {
       const result = await tool.run(input, {
         call: this.deps.info,
+        llm: { provider: this.deps.llm.provider, model: this.deps.llm.model },
         history: this.history,
         settings: this.deps.settings,
         log: this.log,
