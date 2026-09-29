@@ -44,6 +44,11 @@ export const END_GRACE_PER_CHAR_MS = 55;
 /** Ceilings for that pause: a handoff can afford to let a sentence finish, a fault cannot. */
 export const END_GRACE_MAX_MS = 4_000;
 export const END_GRACE_FAULT_MAX_MS = 2_000;
+/**
+ * After the end frame, Twilio closes the socket itself once it has taken the handoff. This is only
+ * how long we wait for that before closing it ourselves, so a socket Twilio forgets is not kept.
+ */
+export const END_CLOSE_FALLBACK_MS = 5_000;
 
 /** ws close codes used here. 1000 normal, 1002 protocol, 1003 unacceptable data. */
 const CLOSE_NORMAL = 1000;
@@ -80,6 +85,7 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
    */
   let speechDoneAtMs = now();
   let endSent = false;
+  let endCloseTimer: NodeJS.Timeout | undefined;
   let closed = false;
   let windowStart = now();
   let windowCount = 0;
@@ -103,6 +109,7 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
     if (closed) return;
     closed = true;
     clearTimeout(setupTimer);
+    clearTimeout(endCloseTimer);
     try {
       socket.close(code, reason);
     } catch {
@@ -159,9 +166,17 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
       if (grace > 0) await new Promise((resolve) => setTimeout(resolve, grace));
 
       send({ type: 'end', handoffData: JSON.stringify(data) });
-      // A short breath so the frame leaves the socket before it closes.
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      close(CLOSE_NORMAL, 'call ended');
+      // Twilio closes the socket once it has read the end frame. Closing it ourselves straight
+      // after the frame raced that: Twilio saw the socket go first, failed the widget with 64105
+      // "Websocket ended" and dropped the HandoffData, so the Studio flow took Failed, not Success.
+      endCloseTimer = setTimeout(() => {
+        log.warn(
+          { waited_ms: END_CLOSE_FALLBACK_MS },
+          'Twilio did not close the socket after the end frame; closing it',
+        );
+        close(CLOSE_NORMAL, 'call ended');
+      }, END_CLOSE_FALLBACK_MS);
+      endCloseTimer.unref();
     },
   };
 
@@ -277,6 +292,7 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
   socket.on('close', () => {
     closed = true;
     clearTimeout(setupTimer);
+    clearTimeout(endCloseTimer);
     // An end frame we sent ourselves is the normal path; anything else is the caller hanging up.
     if (!endSent && port !== undefined) port.onClose('caller_hangup');
   });
