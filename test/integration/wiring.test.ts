@@ -391,10 +391,15 @@ describe('the end frame', () => {
     // The bug: the server closed the socket 50 ms after the end frame, Twilio saw it go before it
     // had read the frame, and the Studio widget failed with 64105 and no HandoffData.
     expect(w.socket.closed).toBeUndefined();
+    // The session is not over until the socket is: a shutdown closes whatever is still open once
+    // the sessions have ended, and that must not beat Twilio to it either.
+    const ended = (): boolean => w.logs.lines().some((line) => line.event === 'call.ended');
+    expect(ended()).toBe(false);
 
     w.socket.hangUp();
+    await settle(20);
     expect(w.socket.closed?.by).toBe('peer');
-    expect(w.logs.lines().some((line) => line.event === 'call.ended')).toBe(true);
+    expect(ended()).toBe(true);
   });
 
   it(

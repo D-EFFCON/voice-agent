@@ -87,6 +87,11 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
   let endSent = false;
   let endCloseTimer: NodeJS.Timeout | undefined;
   let closed = false;
+  let markClosed: () => void = () => undefined;
+  /** Settles once the socket is closed, by Twilio or by us. */
+  const socketClosed = new Promise<void>((resolve) => {
+    markClosed = resolve;
+  });
   let windowStart = now();
   let windowCount = 0;
   let rateWarned = false;
@@ -115,6 +120,7 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
     } catch {
       // Already gone; nothing to do.
     }
+    markClosed();
   }
 
   function send(frame: Record<string, unknown>): void {
@@ -177,6 +183,9 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
         close(CLOSE_NORMAL, 'call ended');
       }, END_CLOSE_FALLBACK_MS);
       endCloseTimer.unref();
+      // Resolve only once the socket is gone. A shutdown closes every socket left open as soon as
+      // the sessions have ended, which would bring the same race back on a redeploy mid-call.
+      await socketClosed;
     },
   };
 
@@ -293,6 +302,7 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
     closed = true;
     clearTimeout(setupTimer);
     clearTimeout(endCloseTimer);
+    markClosed();
     // An end frame we sent ourselves is the normal path; anything else is the caller hanging up.
     if (!endSent && port !== undefined) port.onClose('caller_hangup');
   });
