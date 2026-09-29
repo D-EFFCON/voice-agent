@@ -12,13 +12,15 @@
 import { MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { CallSession } from '../../src/agent/session.js';
+import { CLOSE_ALL_DEADLINE_MS } from '../../src/agent/registry.js';
+import { CallSession, END_DEADLINE_MS } from '../../src/agent/session.js';
 import type { AgentSettings } from '../../src/agent/types.js';
 import { createClientForModel } from '../../src/llm/aiSdkClient.js';
 import { createRecentProblems } from '../../src/status/index.js';
 import type { ToolDefinition, ToolResult, ToolSettings } from '../../src/tools/types.js';
 import {
   attachRelayLink,
+  END_CLOSE_FALLBACK_MS,
   END_GRACE_BASE_MS,
   END_GRACE_MAX_MS,
 } from '../../src/voice/conversationrelay/link.js';
@@ -362,6 +364,82 @@ describe('the end frame', () => {
     // reset to its length. A whole sentence got the bare base pause, and the goodbye was cut off.
     expect(waited).toBeGreaterThan(END_GRACE_BASE_MS * 2);
     expect(waited).toBeLessThan(END_GRACE_MAX_MS + 400);
+  });
+
+  const handsOff = (): Wired =>
+    wire({
+      endGraceMs: 0,
+      tools: [handoffTool()],
+      answers: [
+        atOnce([
+          {
+            type: 'tool-call',
+            toolCallId: 'c1',
+            toolName: 'handoff_to_team',
+            input: '{"reason":"wants a person"}',
+          },
+          finish('tool-calls'),
+        ]),
+      ],
+    });
+
+  it('leaves the socket for Twilio to close', async () => {
+    const w = handsOff();
+    says(w.socket, 'I want a person');
+    await settle(300);
+
+    expect(w.frames().some((frame) => frame.type === 'end')).toBe(true);
+    // The bug: the server closed the socket 50 ms after the end frame, Twilio saw it go before it
+    // had read the frame, and the Studio widget failed with 64105 and no HandoffData.
+    expect(w.socket.closed).toBeUndefined();
+    // The session is not over until the socket is: a shutdown closes whatever is still open once
+    // the sessions have ended, and that must not beat Twilio to it either.
+    const ended = (): boolean => w.logs.lines().some((line) => line.event === 'call.ended');
+    expect(ended()).toBe(false);
+
+    w.socket.hangUp();
+    await settle(20);
+    expect(w.socket.closed?.by).toBe('peer');
+    expect(ended()).toBe(true);
+  });
+
+  it(
+    'closes the socket itself when Twilio never does',
+    async () => {
+      const w = handsOff();
+      says(w.socket, 'I want a person');
+      await settle(END_CLOSE_FALLBACK_MS + 500);
+
+      expect(w.socket.closed).toMatchObject({ code: 1000, by: 'server' });
+    },
+    END_CLOSE_FALLBACK_MS + 3_000,
+  );
+
+  it('makes a shutdown during a handoff wait for the socket too', async () => {
+    const w = handsOff();
+    says(w.socket, 'I want a person');
+    await settle(300);
+    expect(w.frames().some((frame) => frame.type === 'end')).toBe(true);
+
+    let shutdownDone = false;
+    void w.session.endForShutdown().then(() => {
+      shutdownDone = true;
+    });
+    await settle(50);
+    // The bug: the ending already under way made this return at once, the drain went on to close
+    // every open socket, and the handoff's end frame lost the race after all.
+    expect(shutdownDone).toBe(false);
+
+    w.socket.hangUp();
+    await settle(20);
+    expect(shutdownDone).toBe(true);
+  });
+
+  it('fits the whole wait inside the session and shutdown deadlines', () => {
+    // The bug: the session gave up at 5 s while the link could still be waiting, and a shutdown
+    // then closed the socket early.
+    expect(END_GRACE_MAX_MS + END_CLOSE_FALLBACK_MS).toBeLessThan(END_DEADLINE_MS);
+    expect(END_DEADLINE_MS).toBeLessThanOrEqual(CLOSE_ALL_DEADLINE_MS);
   });
 });
 

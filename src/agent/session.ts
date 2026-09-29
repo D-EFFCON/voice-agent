@@ -53,8 +53,12 @@ export const HISTORY_CHAR_CAP = 24_000;
 /** Model steps per utterance. One reply, or one non-terminal tool and its follow-up, and stop. */
 export const MAX_STEPS = 3;
 
-/** How long out.end() gets before the session is torn down anyway. */
-export const END_DEADLINE_MS = 5_000;
+/**
+ * How long out.end() gets before the session is torn down anyway. An adapter spends up to 4 s
+ * letting the last words play and up to 3 s waiting for the peer to close the socket, so this has
+ * to cover both, and stay under the 8 s a shutdown gives every session to end.
+ */
+export const END_DEADLINE_MS = 7_500;
 
 /** Grace past MAX_CALL_SECONDS after which the session is force-removed, leak or no leak. */
 export const HARD_DEADLINE_GRACE_MS = 30_000;
@@ -119,6 +123,8 @@ export class CallSession implements AgentPort {
   /** The newest turn, running or finished. A late interrupt has nothing else to aim at. */
   private current: TurnRecord | undefined;
   private ending = false;
+  /** The ending in progress, so a later caller of endBecause can wait for it. */
+  private endingDone: Promise<void> | undefined;
   /** Invariant 5: set the moment a terminal tool starts, never cleared. */
   private handingOff = false;
   private outcome: Outcome | undefined;
@@ -694,13 +700,24 @@ export class CallSession implements AgentPort {
 
   /**
    * The single end path. Invariant 1 lives here: the first caller through the door wins, and every
-   * later one returns without doing anything.
+   * later one does nothing but wait for that ending to finish. The waiting matters on a shutdown:
+   * the drain closes every socket still open once the sessions resolve, so a handoff already on its
+   * way out has to be waited for, not skipped, or its end frame loses the race to that close.
    */
-  private async endBecause(
+  private endBecause(
     reason: HandoffReason,
     over: { summary?: string; webhook?: WebhookStatus; fields?: MergedFields } = {},
   ): Promise<void> {
-    if (this.ending || this.state === 'ended') return;
+    if (this.endingDone !== undefined) return this.endingDone;
+    if (this.ending || this.state === 'ended') return Promise.resolve();
+    this.endingDone = this.runEnd(reason, over);
+    return this.endingDone;
+  }
+
+  private async runEnd(
+    reason: HandoffReason,
+    over: { summary?: string; webhook?: WebhookStatus; fields?: MergedFields },
+  ): Promise<void> {
     this.ending = true;
     this.state = 'ending';
     this.clearTimers();
