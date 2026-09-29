@@ -44,6 +44,13 @@ export const END_GRACE_PER_CHAR_MS = 55;
 /** Ceilings for that pause: a handoff can afford to let a sentence finish, a fault cannot. */
 export const END_GRACE_MAX_MS = 4_000;
 export const END_GRACE_FAULT_MAX_MS = 2_000;
+/**
+ * After the end frame, Twilio closes the socket itself once it has taken the handoff. This is only
+ * how long we wait for that before closing it ourselves, so a socket Twilio forgets is not kept.
+ * With END_GRACE_MAX_MS it must fit inside the session's END_DEADLINE_MS, or the session gives up
+ * first and a shutdown closes the socket early after all.
+ */
+export const END_CLOSE_FALLBACK_MS = 3_000;
 
 /** ws close codes used here. 1000 normal, 1002 protocol, 1003 unacceptable data. */
 const CLOSE_NORMAL = 1000;
@@ -80,7 +87,13 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
    */
   let speechDoneAtMs = now();
   let endSent = false;
+  let endCloseTimer: NodeJS.Timeout | undefined;
   let closed = false;
+  let markClosed: () => void = () => undefined;
+  /** Settles once the socket is closed, by Twilio or by us. */
+  const socketClosed = new Promise<void>((resolve) => {
+    markClosed = resolve;
+  });
   let windowStart = now();
   let windowCount = 0;
   let rateWarned = false;
@@ -103,11 +116,13 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
     if (closed) return;
     closed = true;
     clearTimeout(setupTimer);
+    clearTimeout(endCloseTimer);
     try {
       socket.close(code, reason);
     } catch {
       // Already gone; nothing to do.
     }
+    markClosed();
   }
 
   function send(frame: Record<string, unknown>): void {
@@ -147,7 +162,9 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
     },
 
     async end(data: HandoffData): Promise<void> {
-      if (endSent || closed) return;
+      if (closed) return;
+      // A second caller waits on the first ending rather than returning early.
+      if (endSent) return socketClosed;
       endSent = true;
       clearTimeout(setupTimer);
 
@@ -159,9 +176,20 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
       if (grace > 0) await new Promise((resolve) => setTimeout(resolve, grace));
 
       send({ type: 'end', handoffData: JSON.stringify(data) });
-      // A short breath so the frame leaves the socket before it closes.
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      close(CLOSE_NORMAL, 'call ended');
+      // Twilio closes the socket once it has read the end frame. Closing it ourselves straight
+      // after the frame raced that: Twilio saw the socket go first, failed the widget with 64105
+      // "Websocket ended" and dropped the HandoffData, so the Studio flow took Failed, not Success.
+      endCloseTimer = setTimeout(() => {
+        log.warn(
+          { waited_ms: END_CLOSE_FALLBACK_MS },
+          'Twilio did not close the socket after the end frame; closing it',
+        );
+        close(CLOSE_NORMAL, 'call ended');
+      }, END_CLOSE_FALLBACK_MS);
+      endCloseTimer.unref();
+      // Resolve only once the socket is gone. A shutdown closes every socket left open as soon as
+      // the sessions have ended, which would bring the same race back on a redeploy mid-call.
+      await socketClosed;
     },
   };
 
@@ -277,6 +305,8 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
   socket.on('close', () => {
     closed = true;
     clearTimeout(setupTimer);
+    clearTimeout(endCloseTimer);
+    markClosed();
     // An end frame we sent ourselves is the normal path; anything else is the caller hanging up.
     if (!endSent && port !== undefined) port.onClose('caller_hangup');
   });
