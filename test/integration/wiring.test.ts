@@ -12,7 +12,8 @@
 import { MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { CallSession } from '../../src/agent/session.js';
+import { CLOSE_ALL_DEADLINE_MS } from '../../src/agent/registry.js';
+import { CallSession, END_DEADLINE_MS } from '../../src/agent/session.js';
 import type { AgentSettings } from '../../src/agent/types.js';
 import { createClientForModel } from '../../src/llm/aiSdkClient.js';
 import { createRecentProblems } from '../../src/status/index.js';
@@ -413,6 +414,33 @@ describe('the end frame', () => {
     },
     END_CLOSE_FALLBACK_MS + 3_000,
   );
+
+  it('makes a shutdown during a handoff wait for the socket too', async () => {
+    const w = handsOff();
+    says(w.socket, 'I want a person');
+    await settle(300);
+    expect(w.frames().some((frame) => frame.type === 'end')).toBe(true);
+
+    let shutdownDone = false;
+    void w.session.endForShutdown().then(() => {
+      shutdownDone = true;
+    });
+    await settle(50);
+    // The bug: the ending already under way made this return at once, the drain went on to close
+    // every open socket, and the handoff's end frame lost the race after all.
+    expect(shutdownDone).toBe(false);
+
+    w.socket.hangUp();
+    await settle(20);
+    expect(shutdownDone).toBe(true);
+  });
+
+  it('fits the whole wait inside the session and shutdown deadlines', () => {
+    // The bug: the session gave up at 5 s while the link could still be waiting, and a shutdown
+    // then closed the socket early.
+    expect(END_GRACE_MAX_MS + END_CLOSE_FALLBACK_MS).toBeLessThan(END_DEADLINE_MS);
+    expect(END_DEADLINE_MS).toBeLessThanOrEqual(CLOSE_ALL_DEADLINE_MS);
+  });
 });
 
 describe('an interrupt', () => {

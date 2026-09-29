@@ -47,8 +47,10 @@ export const END_GRACE_FAULT_MAX_MS = 2_000;
 /**
  * After the end frame, Twilio closes the socket itself once it has taken the handoff. This is only
  * how long we wait for that before closing it ourselves, so a socket Twilio forgets is not kept.
+ * With END_GRACE_MAX_MS it must fit inside the session's END_DEADLINE_MS, or the session gives up
+ * first and a shutdown closes the socket early after all.
  */
-export const END_CLOSE_FALLBACK_MS = 5_000;
+export const END_CLOSE_FALLBACK_MS = 3_000;
 
 /** ws close codes used here. 1000 normal, 1002 protocol, 1003 unacceptable data. */
 const CLOSE_NORMAL = 1000;
@@ -160,7 +162,9 @@ export function attachRelayLink(deps: RelayLinkDeps): void {
     },
 
     async end(data: HandoffData): Promise<void> {
-      if (endSent || closed) return;
+      if (closed) return;
+      // A second caller waits on the first ending rather than returning early.
+      if (endSent) return socketClosed;
       endSent = true;
       clearTimeout(setupTimer);
 
