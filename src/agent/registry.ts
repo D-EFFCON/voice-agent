@@ -27,7 +27,7 @@ export const CHAT_IDLE_MS = 10 * 60 * 1000;
 export const SWEEP_INTERVAL_MS = 60_000;
 
 /** How long closeAll() waits for every session to end before it stops waiting. */
-export const CLOSE_ALL_DEADLINE_MS = 8_000;
+export const CLOSE_ALL_DEADLINE_MS = 15_000;
 
 export interface SessionRegistryOptions extends Omit<AgentDeps, 'settings'> {
   /** Both slices, because a session hands the tools' own slice to every tool it runs. */

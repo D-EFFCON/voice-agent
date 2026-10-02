@@ -5,7 +5,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createSessionRegistry, MAX_CHAT_SESSIONS } from '../../src/agent/registry.js';
+import {
+  CLOSE_ALL_DEADLINE_MS,
+  createSessionRegistry,
+  MAX_CHAT_SESSIONS,
+} from '../../src/agent/registry.js';
 import type { AgentSettings } from '../../src/agent/types.js';
 import { createRecentProblems } from '../../src/status/index.js';
 import type { ToolDefinition, ToolResult, ToolSettings } from '../../src/tools/types.js';
@@ -242,17 +246,21 @@ describe('shutdown', () => {
     sessions.stop();
   });
 
-  it('gives up on a session whose adapter will not finish', async () => {
-    const sessions = registry();
-    // An adapter whose end() never settles must not hold the shutdown open for ever.
-    const stuck = new FakeVoiceOut({ endDelayMs: 60_000 });
-    sessions.open(callInfo('CA1'), stuck);
+  it(
+    'gives up on a session whose adapter will not finish',
+    async () => {
+      const sessions = registry();
+      // An adapter whose end() never settles must not hold the shutdown open for ever.
+      const stuck = new FakeVoiceOut({ endDelayMs: 60_000 });
+      sessions.open(callInfo('CA1'), stuck);
 
-    await sessions.closeAll('shutdown');
+      await sessions.closeAll('shutdown');
 
-    expect(sessions.size()).toBe(0);
-    sessions.stop();
-  }, 15_000);
+      expect(sessions.size()).toBe(0);
+      sessions.stop();
+    },
+    CLOSE_ALL_DEADLINE_MS + 5_000,
+  );
 });
 
 describe('looking inside a session', () => {

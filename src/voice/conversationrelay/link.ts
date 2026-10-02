@@ -48,9 +48,11 @@ export const END_GRACE_FAULT_MAX_MS = 2_000;
  * After the end frame, Twilio closes the socket itself once it has taken the handoff. This is only
  * how long we wait for that before closing it ourselves, so a socket Twilio forgets is not kept.
  * With END_GRACE_MAX_MS it must fit inside the session's END_DEADLINE_MS, or the session gives up
- * first and a shutdown closes the socket early after all.
+ * first and a shutdown closes the socket early after all. Waiting long costs nothing, since Twilio
+ * closes the moment it is ready; 3 s was not enough on a real call, and Twilio, finding the socket
+ * gone first, failed the widget with 64105 and dropped the HandoffData.
  */
-export const END_CLOSE_FALLBACK_MS = 3_000;
+export const END_CLOSE_FALLBACK_MS = 10_000;
 
 /** ws close codes used here. 1000 normal, 1002 protocol, 1003 unacceptable data. */
 const CLOSE_NORMAL = 1000;

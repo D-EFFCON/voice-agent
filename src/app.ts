@@ -56,7 +56,7 @@ export const BODY_LIMIT_BYTES = 64 * 1024;
 export const REQUEST_TIMEOUT_MS = 30_000;
 export const WS_MAX_PAYLOAD_BYTES = 64 * 1024;
 /** How long drain() waits for the sessions to end before closing the server anyway. */
-export const DRAIN_DEADLINE_MS = 8_000;
+export const DRAIN_DEADLINE_MS = 15_000;
 /** How long drain() gives the server to close once the sessions are gone. */
 const CLOSE_GRACE_MS = 2_000;
 
