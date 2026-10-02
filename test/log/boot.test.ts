@@ -4,6 +4,7 @@
  * with a warning, and server.draining on SIGTERM.
  */
 import { afterEach, describe, expect, it } from 'vitest';
+import { DRAIN_DEADLINE_MS } from '../../src/app.js';
 import { spawnBuiltServer, type SpawnedServer } from '../helpers/index.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,7 +84,7 @@ describe('built server logging', () => {
         level: 'info',
         signal: 'SIGTERM',
         active_calls: 0,
-        deadline_ms: 8000,
+        deadline_ms: DRAIN_DEADLINE_MS,
       });
       expect(server.logs.find((l) => l.event === 'server.stopped')).toMatchObject({
         level: 'info',
