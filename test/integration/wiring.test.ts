@@ -13,6 +13,7 @@ import { MockLanguageModelV4 } from 'ai/test';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { CLOSE_ALL_DEADLINE_MS } from '../../src/agent/registry.js';
+import { DRAIN_DEADLINE_MS } from '../../src/app.js';
 import { CallSession, END_DEADLINE_MS } from '../../src/agent/session.js';
 import type { AgentSettings } from '../../src/agent/types.js';
 import { createClientForModel } from '../../src/llm/aiSdkClient.js';
@@ -440,6 +441,7 @@ describe('the end frame', () => {
     // then closed the socket early.
     expect(END_GRACE_MAX_MS + END_CLOSE_FALLBACK_MS).toBeLessThan(END_DEADLINE_MS);
     expect(END_DEADLINE_MS).toBeLessThanOrEqual(CLOSE_ALL_DEADLINE_MS);
+    expect(CLOSE_ALL_DEADLINE_MS).toBeLessThanOrEqual(DRAIN_DEADLINE_MS);
   });
 });
 

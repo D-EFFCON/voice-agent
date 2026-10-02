@@ -55,10 +55,10 @@ export const MAX_STEPS = 3;
 
 /**
  * How long out.end() gets before the session is torn down anyway. An adapter spends up to 4 s
- * letting the last words play and up to 3 s waiting for the peer to close the socket, so this has
- * to cover both, and stay under the 8 s a shutdown gives every session to end.
+ * letting the last words play and up to 10 s waiting for the peer to close the socket, so this has
+ * to cover both, and stay within the 15 s a shutdown gives every session to end.
  */
-export const END_DEADLINE_MS = 7_500;
+export const END_DEADLINE_MS = 15_000;
 
 /** Grace past MAX_CALL_SECONDS after which the session is force-removed, leak or no leak. */
 export const HARD_DEADLINE_GRACE_MS = 30_000;
